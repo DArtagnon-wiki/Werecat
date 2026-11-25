@@ -6,7 +6,8 @@ uniform float morph = 0.0;
 uniform vec2 screen_size = vec2(720.0, 1280.0);
 uniform vec2 moon_center = vec2(360.0, 236.0);
 uniform float moon_radius = 168.0;
-uniform float hold = 0.0;          // 0..1 win countdown, drawn as a ring
+uniform float hold = 0.0;
+uniform float ground_y = 1240.0;          // 0..1 win countdown, drawn as a ring
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float noise(vec2 p) {
@@ -66,7 +67,7 @@ void fragment() {
 	col = mix(col, mix(vec3(0.42, 0.32, 0.55), vec3(0.12, 0.02, 0.04), m), band * 0.65);
 
 	// ground silhouette at the very bottom
-	float hill = 1240.0 + 18.0 * sin(px.x * 0.012) + 10.0 * sin(px.x * 0.031 + 1.0);
+	float hill = ground_y + 18.0 * sin(px.x * 0.012) + 10.0 * sin(px.x * 0.031 + 1.0);
 	col = mix(col, vec3(0.04, 0.02, 0.06), smoothstep(hill - 1.0, hill + 1.0, px.y));
 	COLOR = vec4(col, 1.0);
 }

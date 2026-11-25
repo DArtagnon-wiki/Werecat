@@ -27,7 +27,7 @@ func _ready() -> void:
 		streams[n] = load("res://assets/audio/sfx_%s.ogg" % n)
 	music_cute.play()
 	music_scary.play()
-	_apply()
+	_apply_volumes()
 
 
 func _music(path: String) -> AudioStreamPlayer:
@@ -35,21 +35,41 @@ func _music(path: String) -> AudioStreamPlayer:
 	var s: AudioStreamOggVorbis = load(path)
 	s.loop = true
 	p.stream = s
+	# Stream (decode as it plays) instead of the web default of fully decoded
+	# samples: two 46 s loops as samples cost ~120 MB and crashed mobile tabs.
+	p.playback_type = AudioServer.PLAYBACK_TYPE_STREAM
 	add_child(p)
 	return p
 
 
 func set_morph(m: float) -> void:
-	morph = clampf(m, 0.0, 1.0)
-	_apply()
+	m = clampf(m, 0.0, 1.0)
+	if absf(m - morph) < 0.002:
+		return
+	morph = m
+	_apply_volumes()
 
 
 func set_enabled(on: bool) -> void:
 	enabled = on
-	_apply()
+	if music_cute:
+		music_cute.stream_paused = not on
+		music_scary.stream_paused = not on
+	_apply_volumes()
+
+
+func set_music_level(v: float) -> void:
+	if absf(v - music_level) < 0.001:
+		return
+	music_level = v
+	_apply_volumes()
 
 
 func _apply() -> void:
+	_apply_volumes()
+
+
+func _apply_volumes() -> void:
 	if not music_cute:
 		return
 	# equal-power crossfade
@@ -57,11 +77,21 @@ func _apply() -> void:
 	var s := sin(morph * PI / 2.0) * music_level
 	music_cute.volume_db = linear_to_db(maxf(c, 0.0001)) - 3.0
 	music_scary.volume_db = linear_to_db(maxf(s, 0.0001)) - 3.0
-	music_cute.stream_paused = not enabled
-	music_scary.stream_paused = not enabled
-	# keep the loops locked together if a browser hiccup drifts them apart
-	if enabled and absf(music_cute.get_playback_position() - music_scary.get_playback_position()) > 0.08:
-		music_scary.seek(music_cute.get_playback_position())
+
+
+var _sync_t := 0.0
+
+
+func _process(delta: float) -> void:
+	# keep the two loops locked together, checked rarely and only for big drift
+	_sync_t += delta
+	if _sync_t < 3.0 or not enabled or not music_cute.playing:
+		return
+	_sync_t = 0.0
+	var a := music_cute.get_playback_position()
+	var b := music_scary.get_playback_position()
+	if absf(a - b) > 0.25 and absf(a - b) < 40.0:
+		music_scary.seek(a)
 
 
 func play(n: String, vol_db := 0.0, pitch_var := 0.0) -> void:

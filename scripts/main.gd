@@ -85,6 +85,8 @@ var sound_on := true
 
 # nodes
 var world: Node2D
+var stage_off := Vector2.ZERO
+var layers: Array = []
 var bg: ColorRect
 var werecat: Werecat
 var field: ColorRect
@@ -146,7 +148,25 @@ func _ready() -> void:
 	audio.set_enabled(sound_on)
 	_build_scene()
 	_load_layout(levels[0])
+	get_viewport().size_changed.connect(_layout)
+	_layout()
 	_show("title")
+
+
+## Centers the 720x1280 design on any screen shape. The night sky stretches
+## to fill the extra room; everything else stays centered.
+func _layout() -> void:
+	var vis := get_viewport().get_visible_rect().size
+	stage_off = Vector2(maxf(0.0, (vis.x - 720.0) / 2.0), maxf(0.0, (vis.y - 1280.0) / 2.0))
+	for l in layers:
+		l.offset = stage_off
+	bg.position = -stage_off - Vector2(40, 40)
+	bg.size = Vector2(720, 1280) + stage_off * 2.0 + Vector2(80, 80)
+	var bm: ShaderMaterial = bg.material
+	bm.set_shader_parameter("screen_size", bg.size)
+	bm.set_shader_parameter("moon_center", Vector2(360, 236) + stage_off + Vector2(40, 40))
+	bm.set_shader_parameter("ground_y", 1240.0 + stage_off.y)
+	world.position = stage_off
 
 
 func _font(path: String, weight: int) -> FontVariation:
@@ -395,6 +415,7 @@ func _screen(n: String, layer := 10) -> Control:
 	var cl := CanvasLayer.new()
 	cl.layer = layer
 	add_child(cl)
+	layers.append(cl)
 	var c := Control.new()
 	c.size = Vector2(720, 1280)
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -422,7 +443,7 @@ func _show(n: String) -> void:
 			state = "paused"
 		"play":
 			state = "play"
-	audio.music_level = 1.0 if n == "play" else 0.75
+	audio.set_music_level(1.0 if n == "play" else 0.75)
 	audio.set_morph(werecat.morph)
 	if prev == "paused" and n == "play":
 		pass
@@ -431,6 +452,7 @@ func _show(n: String) -> void:
 func _build_hud() -> void:
 	hud = CanvasLayer.new()
 	add_child(hud)
+	layers.append(hud)
 	var pause := TextureButton.new()
 	pause.texture_normal = T.ui_pause
 	pause.ignore_texture_size = true
@@ -969,15 +991,16 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventScreenTouch:
 		if event.pressed:
-			if event.position.distance_to(Vector2(360, 236)) < 110.0:
+			var ep: Vector2 = event.position - stage_off
+			if ep.distance_to(Vector2(360, 236)) < 110.0:
 				audio.play("click", -4.0)
 				_pause()
 				return
-			begin_stroke(event.position - FIELD_POS)
+			begin_stroke(ep - FIELD_POS)
 		else:
 			end_stroke()
 	elif event is InputEventScreenDrag:
-		move_stroke(event.position - FIELD_POS)
+		move_stroke(event.position - stage_off - FIELD_POS)
 
 
 func begin_stroke(p: Vector2) -> void:
@@ -1511,7 +1534,7 @@ func _process(delta: float) -> void:
 	bm.set_shader_parameter("hold", hold / HOLD_TIME if mode == "level" and state == "play" else 0.0)
 	_animate_entities()
 	shake = maxf(0.0, shake - delta * 2.5)
-	world.position = Vector2(rng.randf_range(-1, 1), rng.randf_range(-1, 1)) * 10.0 * shake * shake
+	world.position = stage_off + Vector2(rng.randf_range(-1, 1), rng.randf_range(-1, 1)) * 10.0 * shake * shake
 	_update_hud()
 	frame.queue_redraw()
 	meter.queue_redraw()

@@ -65,6 +65,12 @@ jobs:
           ~/godot/godot --headless --path . --export-release "Web" build/web/index.html
           test -f build/web/index.wasm
 
+      - name: Browser soak test (no crash, no memory runaway)
+        timeout-minutes: 5
+        run: |
+          pip install --quiet playwright
+          python3 tests/browser_soak.py build/web
+
       - name: Upload build (PRs)
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v7
