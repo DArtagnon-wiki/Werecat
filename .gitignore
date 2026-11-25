@@ -8,3 +8,7 @@ export_credentials.cfg
 Thumbs.db
 .vscode/
 *.tmp
+
+# Art generator scratch
+tools/build/
+__pycache__/

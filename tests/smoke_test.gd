@@ -1,9 +1,11 @@
 extends SceneTree
 ## Headless smoke tests, run in CI:
 ##   godot --headless --path . -s res://tests/smoke_test.gd
+## Field is 640x744 px. Cute is the top half, Scary the bottom half, with a
+## wavy border around y = 372.
 
 var failures := 0
-var main
+var g
 
 
 func check(cond: bool, msg: String) -> void:
@@ -14,75 +16,106 @@ func check(cond: bool, msg: String) -> void:
 		failures += 1
 
 
-func at(x: float, y: float) -> Vector2:
-	return main.ORIGIN + Vector2(x, y) * main.CELL
-
-
-func run_wall(frames: int = 240) -> void:
-	for i in frames:
-		main.step_bouncers(1.0 / 60.0)
-		main.step_wall(1.0 / 60.0)
-
-
 func fresh() -> void:
-	main.start_level()
-	main.bouncers.clear()
+	g.start_level()
+	for b in g.bouncers:
+		b.node.queue_free()
+	g.bouncers.clear()
+
+
+func add_bouncer(type: int, pos: Vector2) -> void:
+	var s := Sprite2D.new()
+	g.bouncer_layer.add_child(s)
+	g.bouncers.append({"pos": pos, "vel": Vector2.ZERO, "type": type, "node": s, "phase": 0.0})
+
+
+func draw(points: Array) -> void:
+	g.begin_stroke(points[0])
+	draw_more(points)
+
+
+func draw_more(points: Array) -> void:
+	for i in range(1, points.size()):
+		var a: Vector2 = points[i - 1]
+		var b: Vector2 = points[i]
+		var n := maxi(1, int(a.distance_to(b) / 6.0))
+		for k in range(1, n + 1):
+			g.move_stroke(a.lerp(b, float(k) / n))
+
+
+var started := false
 
 
 func _initialize() -> void:
-	main = load("res://scenes/main.tscn").instantiate()
-	root.add_child(main)
+	g = load("res://scenes/main.tscn").instantiate()
+	root.add_child(g)
+
+
+func _process(_delta: float) -> bool:
+	if started:
+		return false
+	started = true
+	run()
+	return false
+
+
+func run() -> void:
 
 	fresh()
-	check(absf(main.scary_percent() - 50.0) < 0.01, "level starts 50/50")
+	check(absf(g.scary_percent() - 50.0) < 3.0, "level starts about 50/50 (%.1f%%)" % g.scary_percent())
 
-	# Rows 0-17 are Cute, 18-35 Scary. Touching just above the border and
-	# swiping up anchors on Scary and grows a Scary wall into Cute.
+	# Cute line from the top half straight down to the bottom edge. The bat is
+	# on the right, so the strip of Scary left of the line flips to Cute.
 	fresh()
-	main.bouncers.append({"pos": Vector2(15.5, 5.5) * main.CELL, "vel": Vector2.ZERO, "type": main.CUTE})
-	check(main.try_start_wall(at(5.5, 17.5), Vector2i(0, -1)), "swipe from border into Cute starts a wall")
-	check(main.wall != null and main.wall.color == main.SCARY, "wall takes the anchor's color (Scary)")
-	run_wall()
-	check(main.wall == null and main.lives == 3, "wall completes")
-	# left pocket (cols 0-4, 18 rows) + wall column (18 cells) flip to Scary
-	check(absf(main.scary_percent() - 62.5) < 0.01, "only the empty pocket flips (62.5% Scary)")
+	add_bouncer(g.SCARY, Vector2(500, 600))
+	var before: float = g.scary_percent()
+	draw([Vector2(100, 200), Vector2(100, 760)])
+	var after: float = g.scary_percent()
+	check(after < before - 5.0 and after > 35.0, "line to the edge claims the bat-free side (%.1f%% -> %.1f%%)" % [before, after])
+	check(g.lives == 3 and not g.stroke_active, "claim closes cleanly")
 
+	# Lifting the finger before closing does nothing and costs nothing.
 	fresh()
-	check(not main.try_start_wall(at(10.5, 5.5), Vector2i(1, 0)), "can't draw a wall inside its own territory")
+	before = g.scary_percent()
+	draw([Vector2(300, 200), Vector2(300, 520)])
+	check(g.stroke_active, "trail is open while drawing in the other territory")
+	g.end_stroke()
+	check(absf(g.scary_percent() - before) < 0.01 and g.lives == 3, "lifting early: no change, no penalty")
 
-	# Snap: touching 2 cells above the border still finds the anchor.
+	# A bat touching an open trail snaps it.
 	fresh()
-	check(main.try_start_wall(at(8.5, 20.5), Vector2i(0, -1)), "touch near the border snaps to it")
+	add_bouncer(g.SCARY, Vector2(300, 600))
+	draw([Vector2(300, 200), Vector2(300, 540)])
+	g.step_bouncers(1.0 / 60.0)
+	check(g.lives == 3, "bat not yet touching the trail")
+	draw_more([Vector2(300, 540), Vector2(300, 620)])
+	g.step_bouncers(1.0 / 60.0)
+	check(g.lives == 2 and not g.stroke_active, "bat touching the trail snaps it and costs a life")
 
-	# A new wall may anchor on a finished wall of the opposite color.
+	# Scary loop: up into Cute, across, and back down into Scary.
 	fresh()
-	main.bouncers.append({"pos": Vector2(15.5, 5.5) * main.CELL, "vel": Vector2.ZERO, "type": main.CUTE})
-	main.try_start_wall(at(5.5, 17.5), Vector2i(0, -1))
-	run_wall()
-	check(main.try_start_wall(at(6.5, 3.5), Vector2i(1, 0)), "wall can anchor on a finished wall")
+	add_bouncer(g.CUTE, Vector2(80, 80))
+	before = g.scary_percent()
+	draw([Vector2(320, 600), Vector2(320, 150), Vector2(440, 150), Vector2(440, 600)])
+	after = g.scary_percent()
+	check(after > before + 3.0, "closing a loop claims the enclosed pocket (%.1f%% -> %.1f%%)" % [before, after])
 
-	# A Scary bouncer in the path breaks a Cute wall growing into Scary.
+	# Strokes that never leave their own territory do nothing.
 	fresh()
-	main.bouncers.append({"pos": Vector2(10.5, 25.5) * main.CELL, "vel": Vector2.ZERO, "type": main.SCARY})
-	check(main.try_start_wall(at(10.5, 17.5), Vector2i(0, 1)), "swipe from border into Scary starts a wall")
-	run_wall()
-	check(main.lives == 2, "bouncer breaks a growing wall")
+	before = g.scary_percent()
+	draw([Vector2(100, 100), Vector2(500, 120)])
+	g.end_stroke()
+	check(absf(g.scary_percent() - before) < 0.01, "doodling inside your own territory changes nothing")
 
-	# Colored frame segments are anchors (bottom cols 8-15 are Cute) but
-	# plain frame is not, and frame never counts toward the %.
-	fresh()
-	check(main.try_start_wall(at(10.5, 35.5), Vector2i(0, -1)), "Cute frame segment anchors a wall into Scary")
-	fresh()
-	check(not main.try_start_wall(at(2.5, 35.5), Vector2i(0, -1)), "plain frame is not an anchor")
-	check(absf(main.scary_percent() - 50.0) < 0.01, "frame segments don't count toward the %")
-
-	main.start_endless()
-	check(main.mode == "endless" and main.bouncers.size() == 2, "endless mode starts with 2 bouncers")
-	main.bouncers.clear()
+	g.start_endless()
+	check(g.mode == "endless" and g.bouncers.size() == 2, "endless mode starts with 2 bouncers")
+	for b in g.bouncers:
+		b.node.queue_free()
+	g.bouncers.clear()
 	for i in 60 * 13:
-		main.clock += 1.0 / 60.0
-		main.step_endless(1.0 / 60.0)
-	check(main.score > 0.0, "endless scores while inside the band")
+		g.clock += 1.0 / 60.0
+		g.step_endless(1.0 / 60.0)
+	check(g.score > 0.0, "endless scores while inside the band")
 
 	print("%d failure(s)" % failures)
 	quit(1 if failures > 0 else 0)

@@ -2,7 +2,7 @@
 
 A Cute vs. Scary territory puzzle game for tweens (creepy and menacing, no gore), built with Godot 4.7.
 
-**Rules:** walls only invade. Touch the Cute/Scary border or a finished wall and swipe into the other territory. The wall takes the color of what it grew from. If a bouncer touches it while it's growing, it breaks and you lose a life. When it finishes, every pocket of the invaded side with no bouncer inside flips. Level mode: hold the target Scary % for 3 seconds. Endless mode: chase a band that drifts every 12 seconds.
+**How it plays:** the only walls are the field's border. Put your finger down in one territory and draw any shape into the other. When your line gets back to your own side, or reaches the edge, every pocket you cut off that has no bouncer inside flips to your color. If a bouncer touches your line while it's open, the line snaps and you lose a life. Lifting your finger early is free. Level mode: hold the target Scary % for 3 seconds. Endless mode: chase a band that drifts every 12 seconds.
 
 **Play:** https://dartagnon-wiki.github.io/Werecat/ (works in Safari on iPhone and Chrome on Android; use "Add to Home Screen" for full-screen play).
 
@@ -30,8 +30,13 @@ The web export is single-threaded (`variant/thread_support=false`), so it runs o
 
 | Path | What |
 | --- | --- |
-| `scenes/main.tscn`, `scripts/main.gd` | The prototype: menu, Level 1-3, Endless, wall rules, pocket flipping, werecat morph |
+| `scripts/main.gd` | Game: freehand claims, bouncers, goal band, Endless, HUD, menu |
+| `scripts/werecat.gd` | Layered werecat rig: 5 morph tiers, blink, glow, drool, mantis strikes |
+| `shaders/` | Territory (smooth organic edges, dissolve), night sky + moon, trail ribbon |
+| `assets/sprites/` | Rendered art (generated, don't hand-edit) |
+| `assets/fonts/` | Fredoka and Grenze Gotisch (SIL Open Font License) |
 | `tests/` | Headless smoke tests run in CI |
 | `export_presets.cfg` | Export presets (Web for now; Android and iOS later) |
-| `art/` | Concept art, including the cute-to-scary morph GIF |
-| `tools/` | The script that generated the morph GIF |
+| `tools/gen_art.py` | Generates every sprite as layered SVG, renders to PNG (needs `rsvg-convert`) |
+| `tools/preview_werecat.py` | Composites the werecat at several morph values for art review |
+| `art/concept/` | Early concept GIF and its generator |
