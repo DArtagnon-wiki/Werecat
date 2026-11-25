@@ -2,7 +2,7 @@
 
 A Cute vs. Scary territory puzzle game, built with Godot 4.7. Swipe to grow walls. A wall takes the color of the territory you start it in, and every closed pocket with no bouncers inside flips to that color. Hit the level's target Scary % and hold it for 3 seconds to win.
 
-**Play:** https://dartagnon-wiki.github.io/werecat/ (works in Safari on iPhone and Chrome on Android; use "Add to Home Screen" for full-screen play).
+**Play:** https://dartagnon-wiki.github.io/Werecat/ (works in Safari on iPhone and Chrome on Android; use "Add to Home Screen" for full-screen play).
 
 ## Build flow
 
