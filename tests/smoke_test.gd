@@ -68,6 +68,14 @@ func _initialize() -> void:
 	run_wall()
 	check(main.lives == 2, "bouncer breaks a growing wall")
 
+	# Colored frame segments are anchors (bottom cols 8-15 are Cute) but
+	# plain frame is not, and frame never counts toward the %.
+	fresh()
+	check(main.try_start_wall(at(10.5, 35.5), Vector2i(0, -1)), "Cute frame segment anchors a wall into Scary")
+	fresh()
+	check(not main.try_start_wall(at(2.5, 35.5), Vector2i(0, -1)), "plain frame is not an anchor")
+	check(absf(main.scary_percent() - 50.0) < 0.01, "frame segments don't count toward the %")
+
 	main.start_endless()
 	check(main.mode == "endless" and main.bouncers.size() == 2, "endless mode starts with 2 bouncers")
 	main.bouncers.clear()

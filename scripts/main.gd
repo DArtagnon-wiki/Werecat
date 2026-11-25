@@ -3,8 +3,10 @@ extends Node2D
 ##
 ## Wall rules:
 ##   - Walls only invade: a Cute wall grows into Scary territory and vice versa.
-##   - Walls start at an anchor: the Cute/Scary border or a finished wall.
-##     The wall takes the anchor's color. The outer frame is not an anchor.
+##   - Walls start at an anchor: the Cute/Scary border, a finished wall, or
+##     a colored frame segment. The wall takes the anchor's color. Plain
+##     frame is not an anchor. Frame segments sit outside the grid, so they
+##     never count toward the Cute/Scary %.
 ##   - A wall grows one way, in the swipe direction, until it reaches the
 ##     frame, a finished wall, or territory of its own color.
 ##   - A bouncer touching a growing wall breaks it (lose a life).
@@ -40,6 +42,9 @@ const COL_ICHOR := Color(0.55, 1.0, 0.35)
 
 const LEVEL := {
 	"name": "1-3",
+	# Colored frame segments: [side, from, to, color]. side = top/bottom/left/right,
+	# from/to = cell range along that side (inclusive).
+	"frame": [["bottom", 8, 15, 0], ["top", 0, 5, 1]],
 	"goal_min": 70.0,
 	"goal_max": 80.0,
 	"cute_bouncers": 1,
@@ -64,6 +69,7 @@ var next_shift := 0.0
 var next_spawn := 0.0
 var spawn_type := CUTE
 var nope := 0.0                  # "nope" wobble timer for an invalid swipe
+var frame := {}                  # Vector2i (just outside the grid) -> color
 var touch_start = null
 var font: Font
 var rng := RandomNumberGenerator.new()
@@ -87,6 +93,7 @@ func reset_grid() -> void:
 		for x in COLS:
 			cells[idx(x, y)] = CUTE if y < ROWS / 2 else SCARY
 	bouncers.clear()
+	frame.clear()
 	wall = null
 	lives = 3
 	hold = 0.0
@@ -99,6 +106,7 @@ func start_level() -> void:
 	reset_grid()
 	goal_min = LEVEL.goal_min
 	goal_max = LEVEL.goal_max
+	load_frame(LEVEL.frame)
 	for i in LEVEL.cute_bouncers:
 		spawn_bouncer(CUTE)
 	for i in LEVEL.scary_bouncers:
@@ -118,6 +126,26 @@ func start_endless() -> void:
 	spawn_bouncer(CUTE)
 	spawn_bouncer(SCARY)
 	state = "play"
+
+
+func load_frame(segments: Array) -> void:
+	for seg in segments:
+		for k in range(seg[1], seg[2] + 1):
+			var c: Vector2i
+			match seg[0]:
+				"top": c = Vector2i(k, -1)
+				"bottom": c = Vector2i(k, ROWS)
+				"left": c = Vector2i(-1, k)
+				_: c = Vector2i(COLS, k)
+			frame[c] = seg[3]
+
+
+## Color of a cell for anchoring: grid cells use their territory color,
+## frame segments their own color, plain frame = -1 (not an anchor).
+func anchor_color(c: Vector2i) -> int:
+	if in_grid(c):
+		return cells[idx(c.x, c.y)]
+	return frame.get(c, -1)
 
 
 ## Spawns a bouncer on a random open cell of its own territory.
@@ -193,16 +221,17 @@ func try_start_wall(screen_pos: Vector2, dir: Vector2i) -> bool:
 	for k in offsets:
 		var s: Vector2i = c + dir * k
 		var a: Vector2i = s - dir
-		if not (in_grid(s) and in_grid(a)):
+		if not in_grid(s):
 			continue
 		var si := idx(s.x, s.y)
-		var ai := idx(a.x, a.y)
 		if solid[si] == 1:
 			continue
-		# anchor must be the other color: either a finished wall or the
-		# territory across the border. Same color = can't invade own side.
-		if cells[ai] != cells[si]:
-			wall = {"start": s, "dir": dir, "color": cells[ai], "len": 1.0}
+		# anchor must be the other color: a finished wall, the territory
+		# across the border, or a colored frame segment. Same color = can't
+		# invade your own side.
+		var ac := anchor_color(a)
+		if ac != -1 and ac != cells[si]:
+			wall = {"start": s, "dir": dir, "color": ac, "len": 1.0}
 			return true
 	return false
 
@@ -388,6 +417,15 @@ func _draw() -> void:
 				col = COL_SCARY if (x + y) % 2 == 0 else COL_SCARY_ALT
 			draw_rect(r, col)
 	draw_rect(Rect2(ORIGIN + shake, Vector2(COLS, ROWS) * CELL), Color(1, 1, 1, 0.3), false, 2.0)
+	for c in frame:
+		var fc: Color = COL_WALL_CUTE if frame[c] == CUTE else Color(0.55, 0.03, 0.08)
+		var r := Rect2(ORIGIN + shake + Vector2(c) * CELL, Vector2(CELL, CELL))
+		# draw as a thin strip hugging the grid edge
+		if c.y < 0: r = Rect2(r.position + Vector2(0, CELL * 0.6), Vector2(CELL, CELL * 0.4))
+		elif c.y >= ROWS: r.size.y = CELL * 0.4
+		elif c.x < 0: r = Rect2(r.position + Vector2(CELL * 0.6, 0), Vector2(CELL * 0.4, CELL))
+		else: r.size.x = CELL * 0.4
+		draw_rect(r, fc)
 	if wall != null:
 		var wc := COL_WALL_CUTE if wall.color == CUTE else Color(0.6, 0.05, 0.1)
 		for c in wall_cells():
@@ -443,7 +481,7 @@ func draw_hud(s: float) -> void:
 	var g0: float = bar.position.x + bar.size.x * (1.0 - goal_max / 100.0)
 	var g1: float = bar.position.x + bar.size.x * (1.0 - goal_min / 100.0)
 	draw_rect(Rect2(g0, bar.position.y - 6, g1 - g0, bar.size.y + 12), Color(1, 0.9, 0.3), false, 3.0)
-	draw_string(font, Vector2(bar.position.x, bar.end.y + 30), "%d%% scary" % roundi(s), HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color.WHITE)
+	draw_string(font, Vector2(bar.position.x, bar.end.y + 24), "%d%% scary" % roundi(s), HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color.WHITE)
 	if mode == "level" and hold > 0.0:
 		draw_arc(Vector2(600, 120), 78, -PI / 2, -PI / 2 + TAU * hold / HOLD_TIME, 48, Color(1, 0.9, 0.3), 6.0)
 
