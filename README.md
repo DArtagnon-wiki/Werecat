@@ -1,6 +1,8 @@
 # Werecat
 
-A Cute vs. Scary territory puzzle game, built with Godot 4.7. Swipe to grow walls. A wall takes the color of the territory you start it in, and every closed pocket with no bouncers inside flips to that color. Hit the level's target Scary % and hold it for 3 seconds to win.
+A Cute vs. Scary territory puzzle game for tweens (creepy and menacing, no gore), built with Godot 4.7.
+
+**Rules:** walls only invade. Touch the Cute/Scary border or a finished wall and swipe into the other territory. The wall takes the color of what it grew from. If a bouncer touches it while it's growing, it breaks and you lose a life. When it finishes, every pocket of the invaded side with no bouncer inside flips. Level mode: hold the target Scary % for 3 seconds. Endless mode: chase a band that drifts every 12 seconds.
 
 **Play:** https://dartagnon-wiki.github.io/Werecat/ (works in Safari on iPhone and Chrome on Android; use "Add to Home Screen" for full-screen play).
 
@@ -28,7 +30,7 @@ The web export is single-threaded (`variant/thread_support=false`), so it runs o
 
 | Path | What |
 | --- | --- |
-| `scenes/main.tscn`, `scripts/main.gd` | The prototype: grid, bouncers, walls, pocket flipping, goal band, werecat morph |
+| `scenes/main.tscn`, `scripts/main.gd` | The prototype: menu, Level 1-3, Endless, wall rules, pocket flipping, werecat morph |
 | `tests/` | Headless smoke tests run in CI |
 | `export_presets.cfg` | Export presets (Web for now; Android and iOS later) |
 | `art/` | Concept art, including the cute-to-scary morph GIF |

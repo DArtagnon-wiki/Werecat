@@ -280,7 +280,7 @@ def frame(i):
                 d.polygon([P(hx + fx - 3, yb), P(hx + fx + 3, yb), P(hx + fx, yb - 8 * em)], fill=(250, 248, 230))
         # drool drip
         dl = 10 + 10 * ((t * 2) % 1)
-        d.line([P(hx + 12, hy + 26 + jaw * 0.6), P(hx + 12, hy + 26 + jaw * 0.6 + dl * em)], fill=(160, 10, 20), width=3 * S)
+        d.line([P(hx + 12, hy + 26 + jaw * 0.6), P(hx + 12, hy + 26 + jaw * 0.6 + dl * em)], fill=(140, 255, 90), width=3 * S)  # glowing green ichor, no blood (tween audience)
 
     # whiskers
     wc = lc((255, 245, 230), (120, 100, 100), m)
