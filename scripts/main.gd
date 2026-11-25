@@ -2,76 +2,86 @@ extends Node2D
 ## Werecat: Cute vs. Scary.
 ##
 ## Claim rules:
-##   - The only walls are the field's border.
-##   - Put your finger down in one territory and draw (any shape) into the
-##     other. A glowing trail follows your finger.
-##   - The trail closes when your finger gets back to your own territory or
-##     reaches the field's edge. Pockets of the invaded territory with no
-##     bouncer inside flip to your color, and so does the trail itself.
-##   - A bouncer that touches your trail while it's open snaps it: you lose
-##     a life. Lifting your finger early just lets the trail fade, no penalty.
+##   - The only walls are the field's border (and moonstone).
+##   - Put your finger down in one territory and draw any shape into the other.
+##   - The trail closes when it gets back to your side, the edge, or stone.
+##     Bouncer-free pockets of the invaded side flip to your color. Pockets
+##     smaller than CAPTURE_FRAC of the field trap their bouncers and flip too.
+##   - Anything that touches an open trail snaps it: lose a life.
+##     Lifting your finger early is free.
 ##
-## Modes: "level" (hold the target band for 3 s) and "endless" (chase a
-## drifting band for points).
+## Mechanics: bombs, moon charms, nests, thorn seeds, moonstone, carvers,
+## wisps, stalkers, the boss, trapping. Level data lives in levels.gd.
 
 const GW := 160
 const GH := 186
 const CELL := 4.0
 const FIELD_POS := Vector2(40, 420)
 const FIELD_SIZE := Vector2(640, 744)
-const TRAIL_R := 2.2            # cells
-const BOUNCER_R := 15.0         # px
+const TRAIL_R := 2.2
 const BOUNCER_SPEED := 170.0
 const HOLD_TIME := 3.0
 const WC_SCALE := 0.58
+const CAPTURE_FRAC := 0.025
+const BOMB_R := 22.0             # cells
+const FREEZE_TIME := 4.0
+const NEST_EVERY := 6.5
+const NEST_MAX := 5
+const SEED_EVERY := 2.0
+const SEED_MAX_R := 46.0
 
 const CUTE := 0
 const SCARY := 1
-
-const ENDLESS_BAND := 16.0
-const ENDLESS_SHIFT_EVERY := 12.0
-const ENDLESS_SPAWN_EVERY := 30.0
-const ENDLESS_MAX_BOUNCERS := 8
-
-const LEVEL := {
-	"name": "1-3",
-	"goal_min": 70.0,
-	"goal_max": 80.0,
-	"cute_bouncers": 1,
-	"scary_bouncers": 1,
-}
+const STONE := 2
 
 const INK := Color("241226")
 const PINK := Color("ffb3cb")
 const GOLD := Color("ffd98a")
+const SAVE_PATH := "user://werecat.cfg"
 
+var levels: Array = Levels.all()
+var level_idx := 0
+var level: Dictionary = {}
 var mode := "level"
-var state := "menu"
+var state := "title"
 var mask := PackedByteArray()
+var under := PackedByteArray()
 var trail := PackedByteArray()
 var trail_list := PackedInt32Array()
 var scary_count := 0
+var claimable := 1
 var bouncers: Array = []
+var items: Array = []
 var lives := 3
 var hold := 0.0
 var goal_min := 0.0
 var goal_max := 0.0
-var band_target := 50.0
-var score := 0.0
-var best := 0.0
 var clock := 0.0
-var next_shift := 0.0
-var next_spawn := 0.0
-var spawn_type := CUTE
 var shake := 0.0
+var freeze_t := 0.0
+var mask_dirty := false
+var upload_cool := 0.0
 var rng := RandomNumberGenerator.new()
 
-# stroke state
+# endless
+var band_target := 50.0
+var score := 0.0
+var next_shift := 0.0
+var next_spawn := 0.0
+var next_item := 0.0
+var spawn_n := 0
+
+# stroke
 var stroking := false
 var stroke_active := false
 var stroke_origin := CUTE
 var last_origin_pt := Vector2.ZERO
 var stroke_points := PackedVector2Array()
+
+# save data
+var stars: Array = []
+var best_endless := 0.0
+var sound_on := true
 
 # nodes
 var world: Node2D
@@ -81,21 +91,27 @@ var field: ColorRect
 var field_mat: ShaderMaterial
 var frame: Node2D
 var trail_line: Line2D
+var item_layer: Node2D
 var bouncer_layer: Node2D
 var fx_layer: Node2D
 var fx_back: Node2D
-var tex_glow: Texture2D
+var audio: GameAudio
 var hud: CanvasLayer
 var lbl_title: Label
 var lbl_goal_head: Label
 var lbl_goal: Label
 var hearts: Array = []
 var meter: Node2D
-var menu: Control
-var menu_layer: CanvasLayer
-var overlay: Control
+var screens := {}
 var lbl_over_title: Label
 var lbl_over_sub: Label
+var over_stars: Array = []
+var btn_next: Button
+var btn_sound_title: Button
+var btn_sound_pause: Button
+var intro_labels := {}
+var intro_icon: TextureRect
+var level_tiles: Array = []
 
 var mask_img: Image
 var mask_tex: ImageTexture
@@ -103,12 +119,7 @@ var prev_tex: ImageTexture
 var flip_t := 1.0
 var menu_t := 0.0
 
-var tex_puff: Texture2D
-var tex_bat: Texture2D
-var tex_sparkle: Texture2D
-var tex_ember: Texture2D
-var tex_heart: Texture2D
-var tex_heart_empty: Texture2D
+var T := {}   # textures
 var font_ui: FontVariation
 var font_ui_bold: FontVariation
 var font_title: FontVariation
@@ -116,21 +127,26 @@ var font_title: FontVariation
 
 func _ready() -> void:
 	rng.randomize()
-	tex_puff = load("res://assets/sprites/bouncer_puff.png")
-	tex_bat = load("res://assets/sprites/bouncer_bat.png")
-	tex_sparkle = load("res://assets/sprites/fx_sparkle.png")
-	tex_ember = load("res://assets/sprites/fx_ember.png")
-	tex_glow = load("res://assets/sprites/fx_glow.png")
-	tex_heart = load("res://assets/sprites/ui_heart.png")
-	tex_heart_empty = load("res://assets/sprites/ui_heart_empty.png")
+	for n in ["bouncer_puff", "bouncer_bat", "fx_sparkle", "fx_ember", "fx_glow", "ui_heart", "ui_heart_empty",
+			"ent_bomb", "ent_charm", "ent_wisp", "ent_hunter", "ent_huggy", "ent_boss", "ent_nest_scary", "ent_nest_cute",
+			"ent_seed_scary", "ent_seed_cute", "ent_grub_head", "ent_grub_seg", "ent_slug_head", "ent_slug_seg",
+			"ui_star", "ui_star_empty", "ui_lock", "ui_pause"]:
+		T[n] = load("res://assets/sprites/%s.png" % n)
 	font_ui = _font("res://assets/fonts/Fredoka.ttf", 500)
 	font_ui_bold = _font("res://assets/fonts/Fredoka.ttf", 650)
 	font_title = _font("res://assets/fonts/GrenzeGotisch.ttf", 800)
 	mask.resize(GW * GH)
+	under.resize(GW * GH)
 	trail.resize(GW * GH)
+	stars.resize(levels.size())
+	stars.fill(0)
+	audio = GameAudio.new()
+	add_child(audio)
+	_load_save()
+	audio.set_enabled(sound_on)
 	_build_scene()
-	reset_grid()
-	_show_menu()
+	_load_layout(levels[0])
+	_show("title")
 
 
 func _font(path: String, weight: int) -> FontVariation:
@@ -139,6 +155,31 @@ func _font(path: String, weight: int) -> FontVariation:
 	var ts := TextServerManager.get_primary_interface()
 	fv.variation_opentype = {ts.name_to_tag("wght"): weight}
 	return fv
+
+
+# ================================================================ save
+
+func _load_save() -> void:
+	var cf := ConfigFile.new()
+	if cf.load(SAVE_PATH) != OK:
+		return
+	for i in levels.size():
+		stars[i] = int(cf.get_value("stars", levels[i].id, 0))
+	best_endless = float(cf.get_value("endless", "best", 0.0))
+	sound_on = bool(cf.get_value("settings", "sound", true))
+
+
+func _save() -> void:
+	var cf := ConfigFile.new()
+	for i in levels.size():
+		cf.set_value("stars", levels[i].id, stars[i])
+	cf.set_value("endless", "best", best_endless)
+	cf.set_value("settings", "sound", sound_on)
+	cf.save(SAVE_PATH)
+
+
+func is_unlocked(i: int) -> bool:
+	return i == 0 or stars[i - 1] > 0
 
 
 # ================================================================ scene
@@ -182,7 +223,7 @@ func _build_scene() -> void:
 	field_mat.set_shader_parameter("field_size", FIELD_SIZE)
 	field.material = field_mat
 	world.add_child(field)
-	mask_img = Image.create(GW, GH, false, Image.FORMAT_L8)
+	mask_img = Image.create(GW, GH, false, Image.FORMAT_RG8)
 	mask_tex = ImageTexture.create_from_image(mask_img)
 	prev_tex = ImageTexture.create_from_image(mask_img)
 	field_mat.set_shader_parameter("mask_tex", mask_tex)
@@ -191,6 +232,9 @@ func _build_scene() -> void:
 	frame = Node2D.new()
 	frame.draw.connect(_draw_frame)
 	world.add_child(frame)
+
+	item_layer = Node2D.new()
+	world.add_child(item_layer)
 
 	trail_line = _make_trail_line()
 	world.add_child(trail_line)
@@ -206,8 +250,11 @@ func _build_scene() -> void:
 	world.add_child(fx_layer)
 
 	_build_hud()
-	_build_menu()
-	_build_overlay()
+	_build_title()
+	_build_level_select()
+	_build_intro()
+	_build_pause()
+	_build_over()
 
 
 func _make_trail_line() -> Line2D:
@@ -260,34 +307,7 @@ func _draw_frame() -> void:
 		frame.draw_colored_polygon(inner, trim)
 
 
-func _build_hud() -> void:
-	hud = CanvasLayer.new()
-	add_child(hud)
-	lbl_title = _label(font_ui_bold, 30, Color.WHITE)
-	lbl_title.position = Vector2(30, 26)
-	hud.add_child(lbl_title)
-	for i in 3:
-		var h := TextureRect.new()
-		h.texture = tex_heart
-		h.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		h.size = Vector2(40, 40)
-		h.position = Vector2(26 + i * 42, 70)
-		hud.add_child(h)
-		hearts.append(h)
-	lbl_goal_head = _label(font_ui_bold, 20, Color(1, 1, 1, 0.8))
-	lbl_goal_head.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	lbl_goal_head.size = Vector2(240, 30)
-	lbl_goal_head.position = Vector2(450, 30)
-	hud.add_child(lbl_goal_head)
-	lbl_goal = _label(font_title, 46, GOLD)
-	lbl_goal.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	lbl_goal.size = Vector2(300, 60)
-	lbl_goal.position = Vector2(390, 52)
-	hud.add_child(lbl_goal)
-	meter = Node2D.new()
-	meter.draw.connect(_draw_meter)
-	hud.add_child(meter)
-
+# ================================================================ UI
 
 func _label(font: Font, size: int, col: Color) -> Label:
 	var l := Label.new()
@@ -298,7 +318,365 @@ func _label(font: Font, size: int, col: Color) -> Label:
 	l.add_theme_constant_override("outline_size", maxi(6, size / 4))
 	l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45))
 	l.add_theme_constant_override("shadow_offset_y", 3)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
+
+
+func _centered(font: Font, size: int, col: Color, text: String, y: float, x := 0.0, w := 720.0) -> Label:
+	var l := _label(font, size, col)
+	l.text = text
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD
+	l.position = Vector2(x, y)
+	l.size = Vector2(w, size * 1.4)
+	return l
+
+
+func _panel_style(alpha := 0.88) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.09, 0.03, 0.08, alpha)
+	sb.border_color = Color(PINK, 0.8)
+	sb.set_border_width_all(3)
+	sb.set_corner_radius_all(30)
+	sb.shadow_color = Color(0, 0, 0, 0.5)
+	sb.shadow_size = 24
+	return sb
+
+
+func _panel(r: Rect2) -> Panel:
+	var p := Panel.new()
+	p.add_theme_stylebox_override("panel", _panel_style())
+	p.position = r.position
+	p.size = r.size
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return p
+
+
+func _button(text: String, cb: Callable, primary := true, w := 400.0, h := 92.0, fs := 36) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(w, h)
+	b.size = Vector2(w, h)
+	b.add_theme_font_override("font", font_ui_bold)
+	b.add_theme_font_size_override("font_size", fs)
+	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		b.add_theme_color_override(c, Color.WHITE)
+	b.add_theme_color_override("font_outline_color", INK)
+	b.add_theme_constant_override("outline_size", 8)
+	for st in ["normal", "hover", "pressed", "focus", "disabled"]:
+		var sb := StyleBoxFlat.new()
+		var base := Color("c23a6a") if primary else Color("3a1640")
+		if st == "pressed":
+			base = base.darkened(0.25)
+		elif st == "hover":
+			base = base.lightened(0.08)
+		elif st == "disabled":
+			base = Color("2a1a2e")
+		sb.bg_color = base
+		sb.border_color = INK
+		sb.set_border_width_all(5)
+		sb.border_width_bottom = 11 if st != "pressed" else 6
+		sb.set_corner_radius_all(int(h / 2))
+		sb.shadow_color = Color(0, 0, 0, 0.35)
+		sb.shadow_size = 10
+		sb.shadow_offset = Vector2(0, 6)
+		if st == "focus":
+			sb.draw_center = false
+			sb.border_color = Color(1, 1, 1, 0.0)
+			sb.shadow_size = 0
+		b.add_theme_stylebox_override(st, sb)
+	b.pressed.connect(func() -> void:
+		audio.play("click", -4.0)
+		cb.call())
+	return b
+
+
+func _screen(n: String, layer := 10) -> Control:
+	var cl := CanvasLayer.new()
+	cl.layer = layer
+	add_child(cl)
+	var c := Control.new()
+	c.size = Vector2(720, 1280)
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cl.add_child(c)
+	screens[n] = c
+	c.visible = false
+	return c
+
+
+func _show(n: String) -> void:
+	for k in screens:
+		screens[k].visible = k == n
+	hud.visible = n in ["play", "pause"] or (n == "over" and state != "title")
+	var prev := state
+	match n:
+		"title":
+			state = "title"
+			menu_t = 0.0
+		"levels":
+			state = "levels"
+			_refresh_level_select()
+		"intro":
+			state = "intro"
+		"pause":
+			state = "paused"
+		"play":
+			state = "play"
+	audio.music_level = 1.0 if n == "play" else 0.75
+	audio.set_morph(werecat.morph)
+	if prev == "paused" and n == "play":
+		pass
+
+
+func _build_hud() -> void:
+	hud = CanvasLayer.new()
+	add_child(hud)
+	var pause := TextureButton.new()
+	pause.texture_normal = T.ui_pause
+	pause.ignore_texture_size = true
+	pause.stretch_mode = TextureButton.STRETCH_SCALE
+	pause.size = Vector2(56, 56)
+	pause.position = Vector2(22, 24)
+	pause.pressed.connect(func() -> void:
+		if state == "play":
+			audio.play("click", -4.0)
+			_pause())
+	hud.add_child(pause)
+	lbl_title = _label(font_ui_bold, 28, Color.WHITE)
+	lbl_title.position = Vector2(90, 24)
+	hud.add_child(lbl_title)
+	for i in 3:
+		var h := TextureRect.new()
+		h.texture = T.ui_heart
+		h.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		h.size = Vector2(38, 38)
+		h.position = Vector2(88 + i * 40, 64)
+		h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hud.add_child(h)
+		hearts.append(h)
+	lbl_goal_head = _label(font_ui_bold, 20, Color(1, 1, 1, 0.85))
+	lbl_goal_head.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	lbl_goal_head.size = Vector2(260, 30)
+	lbl_goal_head.position = Vector2(430, 28)
+	hud.add_child(lbl_goal_head)
+	lbl_goal = _label(font_title, 46, GOLD)
+	lbl_goal.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	lbl_goal.size = Vector2(300, 60)
+	lbl_goal.position = Vector2(390, 50)
+	hud.add_child(lbl_goal)
+	meter = Node2D.new()
+	meter.draw.connect(_draw_meter)
+	hud.add_child(meter)
+
+
+func _build_title() -> void:
+	var c := _screen("title")
+	c.add_child(_panel(Rect2(FIELD_POS + Vector2(20, 40), FIELD_SIZE - Vector2(40, 80))))
+	var title := _centered(font_title, 132, Color("ffe3ee"), "Werecat", 500)
+	title.add_theme_constant_override("outline_size", 22)
+	title.add_theme_constant_override("shadow_offset_y", 8)
+	c.add_child(title)
+	c.add_child(_centered(font_ui, 28, Color(1, 0.85, 0.9), "Cute or scary? You decide.", 668))
+	var b1 := _button("Play", func() -> void: _show("levels"))
+	b1.position = Vector2(160, 770)
+	c.add_child(b1)
+	var b2 := _button("Endless", start_endless, false)
+	b2.position = Vector2(160, 885)
+	c.add_child(b2)
+	btn_sound_title = _button("", _toggle_sound, false, 260, 64, 26)
+	btn_sound_title.position = Vector2(230, 1010)
+	c.add_child(btn_sound_title)
+	_refresh_sound_buttons()
+
+
+func _build_level_select() -> void:
+	var c := _screen("levels")
+	c.add_child(_panel(Rect2(FIELD_POS + Vector2(12, 14), FIELD_SIZE - Vector2(24, 28))))
+	c.add_child(_centered(font_title, 54, Color("ffe3ee"), "Choose a Night", 446))
+	var back := _button("‹ Back", func() -> void: _show("title"), false, 150, 56, 24)
+	back.position = Vector2(24, 28)
+	c.add_child(back)
+	for w in 4:
+		var y0 := 530.0 + w * 160.0
+		var hdr := _label(font_title, 30, Color(PINK, 0.95))
+		hdr.text = "%d · %s" % [w + 1, Levels.WORLDS[w]]
+		hdr.position = Vector2(90, y0 - 4)
+		c.add_child(hdr)
+		for k in 5:
+			var i := w * 5 + k
+			var b := Button.new()
+			b.position = Vector2(88 + k * 112, y0 + 38)
+			b.size = Vector2(96, 96)
+			b.add_theme_font_override("font", font_ui_bold)
+			b.add_theme_font_size_override("font_size", 30)
+			for cc in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_disabled_color"]:
+				b.add_theme_color_override(cc, Color.WHITE)
+			b.add_theme_color_override("font_outline_color", INK)
+			b.add_theme_constant_override("outline_size", 7)
+			b.pressed.connect(func() -> void:
+				audio.play("click", -4.0)
+				open_intro(i))
+			c.add_child(b)
+			var srow := HBoxContainer.new()
+			srow.position = Vector2(8, 66)
+			srow.add_theme_constant_override("separation", 1)
+			srow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			b.add_child(srow)
+			var st_rects: Array = []
+			for s in 3:
+				var tr := TextureRect.new()
+				tr.texture = T.ui_star_empty
+				tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				tr.custom_minimum_size = Vector2(26, 26)
+				tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				srow.add_child(tr)
+				st_rects.append(tr)
+			var lock := TextureRect.new()
+			lock.texture = T.ui_lock
+			lock.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			lock.size = Vector2(46, 46)
+			lock.position = Vector2(25, 22)
+			lock.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			b.add_child(lock)
+			level_tiles.append({"button": b, "stars": st_rects, "lock": lock})
+
+
+func _tile_style(col: Color, pressed := false) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = col.darkened(0.2) if pressed else col
+	sb.border_color = INK
+	sb.set_border_width_all(5)
+	sb.border_width_bottom = 6 if pressed else 10
+	sb.set_corner_radius_all(22)
+	sb.content_margin_bottom = 26
+	return sb
+
+
+func _refresh_level_select() -> void:
+	var total := 0
+	for s in stars:
+		total += s
+	for i in level_tiles.size():
+		var t: Dictionary = level_tiles[i]
+		var b: Button = t.button
+		var open := is_unlocked(i)
+		b.disabled = not open
+		b.text = levels[i].id if open else ""
+		var col := Color("c23a6a") if stars[i] > 0 else Color("6a2a6e")
+		if not open:
+			col = Color("2a1a2e")
+		for st in ["normal", "hover", "focus", "disabled"]:
+			b.add_theme_stylebox_override(st, _tile_style(col))
+		b.add_theme_stylebox_override("pressed", _tile_style(col, true))
+		t.lock.visible = not open
+		for s in 3:
+			t.stars[s].texture = T.ui_star if s < stars[i] else T.ui_star_empty
+			t.stars[s].visible = open
+
+
+func _build_intro() -> void:
+	var c := _screen("intro")
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.3)
+	dim.size = Vector2(720, 1280)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.add_child(dim)
+	c.add_child(_panel(Rect2(60, 520, 600, 600)))
+	intro_labels.world = _centered(font_ui_bold, 22, PINK, "", 548)
+	c.add_child(intro_labels.world)
+	intro_labels.name = _centered(font_title, 62, Color("ffe3ee"), "", 578, 80, 560)
+	c.add_child(intro_labels.name)
+	intro_labels.goal = _centered(font_ui_bold, 32, GOLD, "", 668)
+	c.add_child(intro_labels.goal)
+	intro_icon = TextureRect.new()
+	intro_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	intro_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	intro_icon.size = Vector2(110, 110)
+	intro_icon.position = Vector2(96, 748)
+	intro_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.add_child(intro_icon)
+	intro_labels.tip_head = _label(font_ui_bold, 28, Color.WHITE)
+	intro_labels.tip_head.position = Vector2(222, 744)
+	c.add_child(intro_labels.tip_head)
+	var tip := _label(font_ui, 23, Color(1, 1, 1, 0.88))
+	tip.autowrap_mode = TextServer.AUTOWRAP_WORD
+	tip.position = Vector2(222, 782)
+	tip.size = Vector2(410, 120)
+	tip.add_theme_constant_override("outline_size", 6)
+	intro_labels.tip = tip
+	c.add_child(tip)
+	var go := _button("Go!", func() -> void: begin_play())
+	go.position = Vector2(160, 940)
+	c.add_child(go)
+	var back := _button("‹ Levels", func() -> void: _show("levels"), false, 180, 56, 22)
+	back.position = Vector2(270, 1040)
+	c.add_child(back)
+
+
+func _build_pause() -> void:
+	var c := _screen("pause", 11)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.45)
+	dim.size = Vector2(720, 1280)
+	c.add_child(dim)
+	c.add_child(_panel(Rect2(100, 520, 520, 600)))
+	c.add_child(_centered(font_title, 72, Color("ffe3ee"), "Paused", 540))
+	var y := 660.0
+	for spec in [["Resume", func() -> void: _resume(), true], ["Restart", func() -> void: begin_play(), false],
+			["Levels", func() -> void: _quit_to_levels(), false]]:
+		var b := _button(spec[0], spec[1], spec[2], 360, 84, 32)
+		b.position = Vector2(180, y)
+		c.add_child(b)
+		y += 104.0
+	btn_sound_pause = _button("", _toggle_sound, false, 260, 64, 26)
+	btn_sound_pause.position = Vector2(230, y + 6)
+	c.add_child(btn_sound_pause)
+	_refresh_sound_buttons()
+
+
+func _build_over() -> void:
+	var c := _screen("over", 11)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.35)
+	dim.size = Vector2(720, 1280)
+	c.add_child(dim)
+	c.add_child(_panel(Rect2(70, 540, 580, 560)))
+	lbl_over_title = _centered(font_title, 62, Color("ffe3ee"), "", 566, 90, 540)
+	lbl_over_title.size.y = 170
+	c.add_child(lbl_over_title)
+	for s in 3:
+		var tr := TextureRect.new()
+		tr.texture = T.ui_star_empty
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.size = Vector2(96, 96)
+		tr.pivot_offset = Vector2(48, 48)
+		tr.position = Vector2(206 + s * 106, 730 - (12 if s == 1 else 0))
+		c.add_child(tr)
+		over_stars.append(tr)
+	lbl_over_sub = _centered(font_ui_bold, 28, GOLD, "", 846, 90, 540)
+	c.add_child(lbl_over_sub)
+	var retry := _button("Retry", func() -> void: _retry(), false, 250, 84, 32)
+	retry.position = Vector2(100, 908)
+	c.add_child(retry)
+	btn_next = _button("Next", func() -> void: _next_level(), true, 250, 84, 32)
+	btn_next.position = Vector2(370, 908)
+	c.add_child(btn_next)
+	var lv := _button("Levels", func() -> void: _quit_to_levels(), false, 200, 60, 24)
+	lv.position = Vector2(260, 1016)
+	c.add_child(lv)
+
+
+func _toggle_sound() -> void:
+	sound_on = not sound_on
+	audio.set_enabled(sound_on)
+	_refresh_sound_buttons()
+	_save()
+
+
+func _refresh_sound_buttons() -> void:
+	for b in [btn_sound_title, btn_sound_pause]:
+		if b:
+			b.text = "Sound: On" if sound_on else "Sound: Off"
 
 
 func _draw_meter() -> void:
@@ -314,14 +692,14 @@ func _draw_meter() -> void:
 	var inside := s >= goal_min and s <= goal_max
 	var gc := GOLD if not inside else Color(1, 1, 0.7)
 	var pulse := (0.7 + 0.3 * sin(clock * 6.0)) if inside else 1.0
-	meter.draw_rect(Rect2(g0, r.position.y - 9, g1 - g0, r.size.y + 18), Color(gc, 0.18 * pulse))
-	meter.draw_rect(Rect2(g0, r.position.y - 9, g1 - g0, r.size.y + 18), Color(gc, pulse), false, 3.0)
+	meter.draw_rect(Rect2(g0, r.position.y - 9, maxf(g1 - g0, 3.0), r.size.y + 18), Color(gc, 0.18 * pulse))
+	meter.draw_rect(Rect2(g0, r.position.y - 9, maxf(g1 - g0, 3.0), r.size.y + 18), Color(gc, pulse), false, 3.0)
 	var nx := split
 	meter.draw_colored_polygon(PackedVector2Array([Vector2(nx - 10, r.position.y - 18), Vector2(nx + 10, r.position.y - 18), Vector2(nx, r.position.y - 4)]), INK)
 	meter.draw_colored_polygon(PackedVector2Array([Vector2(nx - 6, r.position.y - 16), Vector2(nx + 6, r.position.y - 16), Vector2(nx, r.position.y - 7)]), Color.WHITE)
 	meter.draw_line(Vector2(nx, r.position.y), Vector2(nx, r.end.y), Color(1, 1, 1, 0.9), 2.0)
-	meter.draw_texture_rect(tex_puff, Rect2(r.position.x - 52, r.position.y - 22, 74, 74), false)
-	meter.draw_texture_rect(tex_bat, Rect2(r.end.x - 22, r.position.y - 24, 78, 78), false)
+	meter.draw_texture_rect(T.bouncer_puff, Rect2(r.position.x - 52, r.position.y - 22, 74, 74), false)
+	meter.draw_texture_rect(T.bouncer_bat, Rect2(r.end.x - 22, r.position.y - 24, 78, 78), false)
 	var txt := "%d%% SCARY" % roundi(s)
 	meter.draw_string_outline(font_ui_bold, Vector2(r.position.x, r.end.y - 8), txt, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, 22, 7, INK)
 	meter.draw_string(font_ui_bold, Vector2(r.position.x, r.end.y - 8), txt, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, 22, Color.WHITE)
@@ -334,243 +712,181 @@ func _grad_rect(r: Rect2, top: Color, bottom: Color) -> void:
 		PackedColorArray([top, top, bottom, bottom]))
 
 
-func _panel_style() -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.09, 0.03, 0.08, 0.86)
-	sb.border_color = Color(PINK, 0.8)
-	sb.set_border_width_all(3)
-	sb.set_corner_radius_all(30)
-	sb.shadow_color = Color(0, 0, 0, 0.5)
-	sb.shadow_size = 24
-	return sb
+func goal_text(a: float, b: float) -> Array:
+	if b <= 50.0:
+		return ["MAKE IT CUTE", "%d–%d%%" % [roundi(100 - b), roundi(100 - a)]]
+	if a >= 50.0:
+		return ["MAKE IT SCARY", "%d–%d%%" % [roundi(a), roundi(b)]]
+	return ["KEEP THE BALANCE", "%d–%d%% scary" % [roundi(a), roundi(b)]]
 
 
-func _button(text: String, cb: Callable, primary := true) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.custom_minimum_size = Vector2(400, 92)
-	b.size = Vector2(400, 92)
-	b.add_theme_font_override("font", font_ui_bold)
-	b.add_theme_font_size_override("font_size", 36)
-	b.add_theme_color_override("font_color", Color.WHITE)
-	b.add_theme_color_override("font_hover_color", Color.WHITE)
-	b.add_theme_color_override("font_pressed_color", Color.WHITE)
-	b.add_theme_color_override("font_outline_color", INK)
-	b.add_theme_constant_override("outline_size", 8)
-	for st in ["normal", "hover", "pressed", "focus"]:
-		var sb := StyleBoxFlat.new()
-		var base := Color("c23a6a") if primary else Color("3a1640")
-		if st == "pressed":
-			base = base.darkened(0.25)
-		elif st == "hover":
-			base = base.lightened(0.08)
-		sb.bg_color = base
-		sb.border_color = INK
-		sb.set_border_width_all(5)
-		sb.border_width_bottom = 11 if st != "pressed" else 6
-		sb.set_corner_radius_all(46)
-		sb.shadow_color = Color(0, 0, 0, 0.35)
-		sb.shadow_size = 10
-		sb.shadow_offset = Vector2(0, 6)
-		if st == "focus":
-			sb.draw_center = false
-			sb.border_color = Color(1, 1, 1, 0.0)
-		b.add_theme_stylebox_override(st, sb)
-	b.pressed.connect(cb)
-	return b
+# ================================================================ flow
 
-
-func _build_menu() -> void:
-	menu_layer = CanvasLayer.new()
-	add_child(menu_layer)
-	menu = Control.new()
-	menu.size = Vector2(720, 1280)
-	menu.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	menu_layer.add_child(menu)
-	var panel := Panel.new()
-	panel.add_theme_stylebox_override("panel", _panel_style())
-	panel.position = FIELD_POS + Vector2(20, 40)
-	panel.size = FIELD_SIZE - Vector2(40, 80)
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	menu.add_child(panel)
-	var title := _label(font_title, 132, Color("ffe3ee"))
-	title.text = "Werecat"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.size = Vector2(720, 160)
-	title.position = Vector2(0, 510)
-	title.add_theme_constant_override("outline_size", 22)
-	title.add_theme_constant_override("shadow_offset_y", 8)
-	menu.add_child(title)
-	var tag := _label(font_ui, 28, Color(1, 0.85, 0.9))
-	tag.text = "Cute or scary? You decide."
-	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tag.size = Vector2(720, 40)
-	tag.position = Vector2(0, 676)
-	menu.add_child(tag)
-	var b1 := _button("Play Level %s" % LEVEL.name, start_level)
-	b1.position = Vector2(160, 790)
-	menu.add_child(b1)
-	var b2 := _button("Endless", start_endless, false)
-	b2.position = Vector2(160, 910)
-	menu.add_child(b2)
-	var how := _label(font_ui, 23, Color(1, 1, 1, 0.8))
-	how.text = "Draw from your side into the other side.\nClose the loop to claim it. Keep bats off your line!"
-	how.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	how.autowrap_mode = TextServer.AUTOWRAP_WORD
-	how.size = Vector2(560, 90)
-	how.position = Vector2(80, 1040)
-	how.add_theme_constant_override("outline_size", 6)
-	menu.add_child(how)
-
-
-func _build_overlay() -> void:
-	var layer := CanvasLayer.new()
-	add_child(layer)
-	overlay = Control.new()
-	overlay.size = Vector2(720, 1280)
-	overlay.visible = false
-	layer.add_child(overlay)
-	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.35)
-	dim.size = Vector2(720, 1280)
-	overlay.add_child(dim)
-	var panel := Panel.new()
-	panel.add_theme_stylebox_override("panel", _panel_style())
-	panel.position = Vector2(70, 600)
-	panel.size = Vector2(580, 420)
-	overlay.add_child(panel)
-	lbl_over_title = _label(font_title, 64, Color("ffe3ee"))
-	lbl_over_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl_over_title.autowrap_mode = TextServer.AUTOWRAP_WORD
-	lbl_over_title.size = Vector2(540, 170)
-	lbl_over_title.position = Vector2(90, 630)
-	overlay.add_child(lbl_over_title)
-	lbl_over_sub = _label(font_ui_bold, 30, GOLD)
-	lbl_over_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl_over_sub.size = Vector2(540, 50)
-	lbl_over_sub.position = Vector2(90, 806)
-	overlay.add_child(lbl_over_sub)
-	var b := _button("Continue", _show_menu)
-	b.position = Vector2(160, 890)
-	overlay.add_child(b)
-
-
-# ================================================================ game flow
-
-func _show_menu() -> void:
-	state = "menu"
-	menu.visible = true
-	overlay.visible = false
-	hud.visible = false
-	_clear_stroke()
-	reset_grid()
-
-
-func reset_grid() -> void:
-	scary_count = 0
-	for y in GH:
-		for x in GW:
-			var boundary := GH * 0.5 + 7.0 * sin(x * 0.07) + 3.5 * sin(x * 0.19 + 1.0)
-			var v := SCARY if y >= boundary else CUTE
-			mask[y * GW + x] = v
-			scary_count += v
-	trail.fill(0)
-	trail_list.clear()
-	for b in bouncers:
-		b.node.queue_free()
-	bouncers.clear()
-	lives = 3
-	hold = 0.0
-	clock = 0.0
-	score = 0.0
-	_upload_mask(false)
-
-
-func start_level() -> void:
+func open_intro(i: int) -> void:
+	level_idx = i
+	level = levels[i]
 	mode = "level"
-	reset_grid()
-	goal_min = LEVEL.goal_min
-	goal_max = LEVEL.goal_max
-	for i in LEVEL.cute_bouncers:
-		spawn_bouncer(CUTE)
-	for i in LEVEL.scary_bouncers:
-		spawn_bouncer(SCARY)
-	_enter_play()
+	_load_layout(level)
+	werecat.set_target(scary_percent() / 100.0)
+	intro_labels.world.text = "NIGHT %s · %s" % [level.id, Levels.WORLDS[i / 5].to_upper()]
+	intro_labels.name.text = level.name
+	var gt := goal_text(level.goal[0], level.goal[1])
+	intro_labels.goal.text = "%s  %s" % [gt[0].capitalize(), gt[1]]
+	var tip: String = level.tip
+	if tip == "":
+		tip = "band" if i > 1 else "claim"
+	var tdata: Array = Levels.TIPS[tip]
+	intro_labels.tip_head.text = tdata[0]
+	intro_labels.tip.text = tdata[1]
+	intro_icon.texture = _tip_icon(tip)
+	_show("intro")
+
+
+func _tip_icon(tip: String) -> Texture2D:
+	match tip:
+		"bomb": return T.ent_bomb
+		"charm": return T.ent_charm
+		"grub": return T.ent_grub_head
+		"slug": return T.ent_slug_head
+		"seed": return T.ent_seed_scary
+		"nest": return T.ent_nest_scary
+		"wisp": return T.ent_wisp
+		"stalker": return T.ent_hunter
+		"boss": return T.ent_boss
+		"trap": return T.bouncer_puff
+		"stone": return T.ui_lock
+	return T.ui_star
+
+
+func begin_play() -> void:
+	mode = "level"
+	_load_layout(level)
+	_spawn_level_entities(level)
+	goal_min = level.goal[0]
+	goal_max = level.goal[1]
+	werecat.set_target(scary_percent() / 100.0)
+	audio.play("start", -2.0)
+	_show("play")
 
 
 func start_endless() -> void:
 	mode = "endless"
-	reset_grid()
+	level = {"id": "∞", "name": "Endless", "layout": ["split_h", 0.5], "goal": [42, 58], "par": 0, "bouncers": [], "items": [], "tip": ""}
+	_load_layout(level)
 	band_target = 50.0
-	goal_min = band_target - ENDLESS_BAND / 2.0
-	goal_max = band_target + ENDLESS_BAND / 2.0
-	next_shift = ENDLESS_SHIFT_EVERY
-	next_spawn = ENDLESS_SPAWN_EVERY
-	spawn_type = CUTE
-	spawn_bouncer(CUTE)
-	spawn_bouncer(SCARY)
-	_enter_play()
-
-
-func _enter_play() -> void:
-	state = "play"
-	menu.visible = false
-	overlay.visible = false
-	hud.visible = true
+	goal_min = 42.0
+	goal_max = 58.0
+	next_shift = 12.0
+	next_spawn = 25.0
+	next_item = 15.0
+	spawn_n = 0
+	score = 0.0
+	_spawn_bouncer("basic", CUTE)
+	_spawn_bouncer("basic", SCARY)
 	werecat.set_target(scary_percent() / 100.0)
+	audio.play("start", -2.0)
+	_show("play")
+
+
+func _pause() -> void:
+	_cancel_stroke()
+	_show("pause")
+
+
+func _resume() -> void:
+	_show("play")
+
+
+func _retry() -> void:
+	if mode == "endless":
+		start_endless()
+	else:
+		begin_play()
+
+
+func _next_level() -> void:
+	if level_idx + 1 < levels.size():
+		open_intro(level_idx + 1)
+	else:
+		_show("levels")
+
+
+func _quit_to_levels() -> void:
+	_cancel_stroke()
+	_clear_entities()
+	_show("levels")
 
 
 func _end(won: bool) -> void:
 	state = "won" if won else "lost"
-	_clear_stroke()
+	_cancel_stroke()
+	var earned := 0
 	if mode == "endless":
-		best = maxf(best, score)
+		best_endless = maxf(best_endless, score)
 		lbl_over_title.text = "The night ends"
-		lbl_over_sub.text = "Score %d   ·   Best %d" % [roundi(score), roundi(best)]
+		lbl_over_sub.text = "Score %d   ·   Best %d" % [roundi(score), roundi(best_endless)]
+		btn_next.visible = false
+		audio.play("lose", -2.0)
 	elif won:
-		lbl_over_title.text = "The Werecat is pleased"
-		lbl_over_sub.text = "Level %s complete" % LEVEL.name
+		earned = 1 + (1 if lives == 3 else 0) + (1 if lives == 3 and clock <= float(level.par) else 0)
+		stars[level_idx] = maxi(stars[level_idx], earned)
+		lbl_over_title.text = "The Werecat is pleased" if level_idx < levels.size() - 1 else "The spell is broken!"
+		var hint := ""
+		if earned < 3:
+			hint = "Keep all 3 hearts for more stars" if lives < 3 else "Finish within %ds for 3 stars" % int(level.par)
+		lbl_over_sub.text = ("Night %s complete" % level.id) if hint == "" else hint
+		btn_next.visible = level_idx + 1 < levels.size()
+		audio.play("win", -1.0)
 	else:
 		lbl_over_title.text = "The Werecat is displeased"
 		lbl_over_sub.text = "Out of lives. Try again?"
-	overlay.visible = true
+		btn_next.visible = false
+		audio.play("lose", -2.0)
+	_save()
+	for s in 3:
+		over_stars[s].visible = mode != "endless"
+		over_stars[s].texture = T.ui_star_empty
+		over_stars[s].scale = Vector2.ONE
+	_show("over")
+	state = "won" if won else "lost"
+	# pop the stars in one by one
+	for s in earned:
+		var tr: TextureRect = over_stars[s]
+		var tw := create_tween()
+		tw.tween_interval(0.35 + s * 0.35)
+		tw.tween_callback(func() -> void:
+			tr.texture = T.ui_star
+			tr.scale = Vector2.ONE * 1.5
+			audio.play("star%d" % (s + 1), -3.0))
+		tw.tween_property(tr, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
-func spawn_bouncer(type: int) -> bool:
-	var open := PackedInt32Array()
-	for i in GW * GH:
-		if mask[i] != type:
-			continue
-		var x := i % GW
-		var y := i / GW
-		if x > 6 and y > 6 and x < GW - 7 and y < GH - 7 and (x + y) % 3 == 0:
-			if _area_is(type, Vector2((x + 0.5) * CELL, (y + 0.5) * CELL), BOUNCER_R + 6.0):
-				open.append(i)
-	if open.is_empty():
-		return false
-	var i: int = open[rng.randi_range(0, open.size() - 1)]
-	var p := Vector2((i % GW + 0.5) * CELL, (i / GW + 0.5) * CELL)
-	var ang := rng.randf_range(0.35, 1.22) + PI / 2.0 * rng.randi_range(0, 3)
-	var v := Vector2(cos(ang), sin(ang)) * BOUNCER_SPEED
-	var s := Sprite2D.new()
-	s.texture = tex_puff if type == CUTE else tex_bat
-	s.scale = Vector2.ONE * 0.6
-	if type == SCARY:
-		var glow := Sprite2D.new()
-		glow.texture = tex_glow
-		glow.scale = Vector2.ONE * 1.5
-		glow.modulate = Color(1, 0.25, 0.1, 0.5)
-		glow.show_behind_parent = true
-		var add := CanvasItemMaterial.new()
-		add.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
-		glow.material = add
-		s.add_child(glow)
-	bouncer_layer.add_child(s)
-	bouncers.append({"pos": p, "vel": v, "type": type, "node": s, "phase": rng.randf() * TAU})
-	return true
+# ================================================================ grid
+
+func _load_layout(lv: Dictionary) -> void:
+	_clear_entities()
+	var built := Levels.build(lv, GW, GH)
+	mask = built[0]
+	under = built[1]
+	trail.fill(0)
+	trail_list.clear()
+	_recount()
+	lives = 3
+	hold = 0.0
+	clock = 0.0
+	freeze_t = 0.0
+	_upload_mask(false)
 
 
-# ================================================================ grid helpers
+func _recount() -> void:
+	scary_count = 0
+	claimable = 0
+	for v in mask:
+		if v != STONE:
+			claimable += 1
+			scary_count += v
+	claimable = maxi(claimable, 1)
+
 
 func in_field(p: Vector2) -> bool:
 	return p.x >= 0.0 and p.y >= 0.0 and p.x < FIELD_SIZE.x and p.y < FIELD_SIZE.y
@@ -586,24 +902,57 @@ func type_at(p: Vector2) -> int:
 	return mask[cell_index(p)]
 
 
-func _area_is(type: int, p: Vector2, r: float) -> bool:
-	for a in 8:
-		var q := p + Vector2(cos(a * PI / 4), sin(a * PI / 4)) * r
-		if not in_field(q) or type_at(q) != type:
-			return false
+func scary_percent() -> float:
+	return 100.0 * scary_count / float(claimable)
+
+
+func _set_cell(i: int, v: int) -> bool:
+	var old := mask[i]
+	if old == v or old == STONE:
+		return false
+	mask[i] = v
+	scary_count += v - old
+	mask_dirty = true
 	return true
 
 
-func scary_percent() -> float:
-	return 100.0 * scary_count / float(GW * GH)
+func paint_disc(center: Vector2, r_cells: float, color: int) -> int:
+	var cx := int(center.x / CELL)
+	var cy := int(center.y / CELL)
+	var r := int(ceil(r_cells))
+	var n := 0
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			if dx * dx + dy * dy > r_cells * r_cells:
+				continue
+			var x := cx + dx
+			var y := cy + dy
+			if x < 0 or y < 0 or x >= GW or y >= GH:
+				continue
+			if _set_cell(y * GW + x, color):
+				n += 1
+	return n
 
 
 func _upload_mask(animate: bool, origin := Vector2(0.5, 0.5)) -> void:
 	if animate:
 		prev_tex.update(mask_img)
-	var bytes := _blurred_mask()
-	mask_img = Image.create_from_data(GW, GH, false, Image.FORMAT_L8, bytes)
+	var bytes := PackedByteArray()
+	bytes.resize(GW * GH * 2)
+	for i in GW * GH:
+		var v := mask[i]
+		if v == STONE:
+			bytes[i * 2] = under[i] * 255
+			bytes[i * 2 + 1] = 255
+		else:
+			bytes[i * 2] = v * 255
+			bytes[i * 2 + 1] = 0
+	var img := Image.create_from_data(GW, GH, false, Image.FORMAT_RG8, bytes)
+	img.resize(GW / 2, GH / 2, Image.INTERPOLATE_BILINEAR)
+	img.resize(GW, GH, Image.INTERPOLATE_CUBIC)
+	mask_img = img
 	mask_tex.update(mask_img)
+	mask_dirty = false
 	if animate:
 		flip_t = 0.0
 		field_mat.set_shader_parameter("flip_origin", origin)
@@ -613,20 +962,6 @@ func _upload_mask(animate: bool, origin := Vector2(0.5, 0.5)) -> void:
 	field_mat.set_shader_parameter("flip_progress", flip_t)
 
 
-## Smooths the binary mask so the shader's threshold traces organic curves
-## instead of the cell grid. Uses native image resampling (fast on web):
-## a 2x bilinear downsample then a cubic upsample is a cheap soft blur.
-func _blurred_mask() -> PackedByteArray:
-	var bytes := PackedByteArray()
-	bytes.resize(GW * GH)
-	for i in GW * GH:
-		bytes[i] = mask[i] * 255
-	var img := Image.create_from_data(GW, GH, false, Image.FORMAT_L8, bytes)
-	img.resize(GW / 2, GH / 2, Image.INTERPOLATE_BILINEAR)
-	img.resize(GW, GH, Image.INTERPOLATE_CUBIC)
-	return img.get_data()
-
-
 # ================================================================ input + strokes
 
 func _input(event: InputEvent) -> void:
@@ -634,6 +969,10 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventScreenTouch:
 		if event.pressed:
+			if event.position.distance_to(Vector2(360, 236)) < 110.0:
+				audio.play("click", -4.0)
+				_pause()
+				return
 			begin_stroke(event.position - FIELD_POS)
 		else:
 			end_stroke()
@@ -642,7 +981,7 @@ func _input(event: InputEvent) -> void:
 
 
 func begin_stroke(p: Vector2) -> void:
-	if state != "play" or not in_field(p):
+	if state != "play" or not in_field(p) or type_at(p) == STONE:
 		return
 	stroking = true
 	stroke_active = false
@@ -658,13 +997,14 @@ func move_stroke(p: Vector2) -> void:
 	var e := CELL * 1.5
 	var near_edge := p.x < e or p.y < e or p.x > FIELD_SIZE.x - e or p.y > FIELD_SIZE.y - e
 	if not stroke_active:
-		if inside and type_at(p) != stroke_origin:
+		if inside and type_at(p) == 1 - stroke_origin:
 			stroke_active = true
 			stroke_points = PackedVector2Array([last_origin_pt])
 			trail_line.points = PackedVector2Array([last_origin_pt])
 			_style_trail()
+			audio.play("trail_cute" if stroke_origin == CUTE else "trail_scary", -6.0, 0.08)
 			_extend_trail(p)
-		elif inside:
+		elif inside and type_at(p) == stroke_origin:
 			last_origin_pt = p
 		return
 	var q := Vector2(clampf(p.x, 0.0, FIELD_SIZE.x - 0.01), clampf(p.y, 0.0, FIELD_SIZE.y - 0.01))
@@ -673,12 +1013,19 @@ func move_stroke(p: Vector2) -> void:
 	_extend_trail(q)
 	if not stroking:
 		return
-	if not inside or near_edge or type_at(q) == stroke_origin:
+	var t := type_at(q)
+	if not inside or near_edge or t == stroke_origin or t == STONE:
 		close_stroke(q)
 
 
 func end_stroke() -> void:
 	if stroking and stroke_active:
+		_fade_trail(false)
+	_clear_stroke()
+
+
+func _cancel_stroke() -> void:
+	if stroke_active:
 		_fade_trail(false)
 	_clear_stroke()
 
@@ -701,6 +1048,15 @@ func _extend_trail(p: Vector2) -> void:
 	var steps := maxi(1, int(a.distance_to(p) / (CELL * 0.5)))
 	for k in steps + 1:
 		_stamp(a.lerp(p, float(k) / steps))
+	# trail touches bombs and charms
+	for it in items:
+		if not it.alive or it.kind not in ["bomb", "charm"]:
+			continue
+		if Geometry2D.get_closest_point_to_segment(it.pos, a, p).distance_to(it.pos) < 26.0:
+			if it.kind == "bomb" and not it.armed:
+				_arm_bomb(it, stroke_origin)
+			elif it.kind == "charm":
+				_use_charm(it)
 
 
 func _stamp(p: Vector2) -> void:
@@ -757,7 +1113,8 @@ func break_trail() -> void:
 	_clear_stroke()
 	lives -= 1
 	shake = 1.0
-	_burst(at, tex_ember, 22, Color(1, 0.35, 0.15))
+	audio.play("snap", 0.0, 0.05)
+	_burst(at, T.fx_ember, 22, Color(1, 0.35, 0.15))
 	if lives <= 0:
 		_end(false)
 
@@ -765,48 +1122,81 @@ func break_trail() -> void:
 func close_stroke(end_pt: Vector2) -> void:
 	var invaded := 1 - stroke_origin
 	for b in bouncers:
-		if b.type == invaded and _touches_trail(b.pos):
+		if _threatens(b) and _touches_trail(b.pos, b.r):
 			break_trail()
 			return
+	var bomb_before := _bomb_cells()
 	for i in trail_list:
-		if mask[i] != stroke_origin:
-			mask[i] = stroke_origin
-			scary_count += 1 if stroke_origin == SCARY else -1
-	_flip_empty_pockets(stroke_origin)
+		_set_cell(i, stroke_origin)
+	var flipped := _flip_empty_pockets(stroke_origin)
 	_upload_mask(true, end_pt / FIELD_SIZE)
 	_fade_trail(false)
-	_burst(end_pt, tex_sparkle if stroke_origin == CUTE else tex_ember, 28, Color.WHITE)
+	_burst(end_pt, T.fx_sparkle if stroke_origin == CUTE else T.fx_ember, 28, Color.WHITE)
+	audio.play("claim_cute" if stroke_origin == CUTE else "claim_scary", -1.0, 0.04)
 	if stroke_origin == SCARY:
 		werecat.strike()
 		shake = maxf(shake, 0.4)
-	werecat.set_target(scary_percent() / 100.0)
 	_clear_stroke()
+	_after_territory_change(bomb_before, stroke_origin)
+	werecat.set_target(scary_percent() / 100.0)
+	if flipped > 0 and mode == "endless":
+		score += flipped * 0.02
 
 
-## Splits the invaded territory into pockets. Pockets with no bouncer of
-## that territory inside flip to `color`. Returns cells flipped.
+func _bomb_cells() -> Dictionary:
+	var d := {}
+	for it in items:
+		if it.alive and it.kind == "bomb" and not it.armed:
+			d[it] = type_at(it.pos)
+	return d
+
+
+## After a claim or explosion: arm bombs whose ground flipped, and kill
+## nests, seeds and carvers whose ground was taken.
+func _after_territory_change(bomb_before: Dictionary, color: int) -> void:
+	for it in bomb_before:
+		if it.alive and not it.armed and type_at(it.pos) != bomb_before[it]:
+			_arm_bomb(it, color)
+	_check_deaths()
+
+
+func _check_deaths() -> void:
+	for it in items:
+		if it.alive and it.kind in ["nest", "seed"] and type_at(it.pos) == 1 - int(it.side):
+			_kill_item(it)
+	for b in bouncers.duplicate():
+		if b.kind == "carver" and type_at(b.pos) == 1 - int(b.side):
+			_capture(b)
+
+
+## Splits the invaded territory into pockets. Bouncer-free pockets flip to
+## `color`. Tiny pockets trap their bouncers and flip too. Returns cells flipped.
 func _flip_empty_pockets(color: int) -> int:
 	var invaded := 1 - color
 	var seen := PackedByteArray()
 	seen.resize(GW * GH)
-	var occupied := {}
+	var occ := {}
 	for b in bouncers:
-		if b.type == invaded:
-			occupied[cell_index(b.pos)] = true
+		if b.side == invaded and b.kind in ["basic", "stalker", "boss"]:
+			var ci := cell_index(b.pos)
+			if not occ.has(ci):
+				occ[ci] = []
+			occ[ci].append(b)
+	var capture_cells := int(claimable * CAPTURE_FRAC)
 	var flipped := 0
 	for start in GW * GH:
 		if seen[start] == 1 or mask[start] != invaded:
 			continue
 		var pocket := PackedInt32Array()
-		var has_bouncer := false
+		var inside: Array = []
 		var stack := PackedInt32Array([start])
 		seen[start] = 1
 		while stack.size() > 0:
 			var i: int = stack[stack.size() - 1]
 			stack.remove_at(stack.size() - 1)
 			pocket.append(i)
-			if occupied.has(i):
-				has_bouncer = true
+			if occ.has(i):
+				inside.append_array(occ[i])
 			var x := i % GW
 			if x > 0 and seen[i - 1] == 0 and mask[i - 1] == invaded:
 				seen[i - 1] = 1
@@ -820,16 +1210,26 @@ func _flip_empty_pockets(color: int) -> int:
 			if i < GW * (GH - 1) and seen[i + GW] == 0 and mask[i + GW] == invaded:
 				seen[i + GW] = 1
 				stack.append(i + GW)
-		if not has_bouncer:
+		if inside.is_empty() or pocket.size() < capture_cells:
+			for b in inside:
+				_capture(b)
 			for i in pocket:
-				mask[i] = color
+				_set_cell(i, color)
 			flipped += pocket.size()
-			scary_count += pocket.size() if color == SCARY else -pocket.size()
 	return flipped
 
 
-func _touches_trail(p: Vector2) -> bool:
-	var r := int(ceil(BOUNCER_R / CELL))
+func _threatens(b: Dictionary) -> bool:
+	if not stroke_active:
+		return false
+	match b.kind:
+		"wisp", "carver":
+			return true
+	return b.side != stroke_origin
+
+
+func _touches_trail(p: Vector2, radius: float) -> bool:
+	var r := int(ceil(radius / CELL))
 	var cx := int(p.x / CELL)
 	var cy := int(p.y / CELL)
 	for dy in range(-r, r + 1):
@@ -838,35 +1238,278 @@ func _touches_trail(p: Vector2) -> bool:
 			var y := cy + dy
 			if x < 0 or y < 0 or x >= GW or y >= GH:
 				continue
-			if trail[y * GW + x] == 1 and Vector2(dx, dy).length() * CELL <= BOUNCER_R + CELL:
+			if trail[y * GW + x] == 1 and Vector2(dx, dy).length() * CELL <= radius + CELL:
 				return true
 	return false
+
+
+# ================================================================ entities
+
+func _clear_entities() -> void:
+	for b in bouncers:
+		_free_bouncer_nodes(b)
+	bouncers.clear()
+	for it in items:
+		if is_instance_valid(it.node):
+			it.node.queue_free()
+	items.clear()
+
+
+func _free_bouncer_nodes(b: Dictionary) -> void:
+	if is_instance_valid(b.node):
+		b.node.queue_free()
+	for s in b.get("segs", []):
+		if is_instance_valid(s):
+			s.queue_free()
+
+
+func _spawn_level_entities(lv: Dictionary) -> void:
+	for spec in lv.items:
+		_spawn_item(spec.kind, spec.side, spec.at * FIELD_SIZE)
+	for spec in lv.bouncers:
+		for k in spec.count:
+			_spawn_bouncer(spec.kind, spec.side, spec.speed)
+
+
+func _free_spot(side: int, radius: float, anywhere := false) -> Variant:
+	var open := PackedInt32Array()
+	for i in range(0, GW * GH, 3):
+		var x := i % GW
+		var y := i / GW
+		if x < 7 or y < 7 or x > GW - 8 or y > GH - 8:
+			continue
+		var v := mask[i]
+		if v == STONE or (not anywhere and v != side):
+			continue
+		var p := Vector2((x + 0.5) * CELL, (y + 0.5) * CELL)
+		var ok := true
+		for a in 8:
+			var q := p + Vector2(cos(a * PI / 4), sin(a * PI / 4)) * (radius + 6.0)
+			var t := type_at(q) if in_field(q) else STONE
+			if t == STONE or (not anywhere and t != side):
+				ok = false
+				break
+		if ok:
+			open.append(i)
+	if open.is_empty():
+		return null
+	var i: int = open[rng.randi_range(0, open.size() - 1)]
+	return Vector2((i % GW + 0.5) * CELL, (i / GW + 0.5) * CELL)
+
+
+func _spawn_bouncer(kind: String, side: int, speed := 1.0, at: Variant = null) -> bool:
+	var r := 15.0
+	var tex: Texture2D = T.bouncer_puff if side == CUTE else T.bouncer_bat
+	var sc := 0.6
+	match kind:
+		"stalker":
+			tex = T.ent_huggy if side == CUTE else T.ent_hunter
+			sc = 0.55 if side == CUTE else 0.62
+			r = 17.0
+		"wisp":
+			tex = T.ent_wisp
+			sc = 0.5
+			r = 16.0
+		"carver":
+			tex = T.ent_slug_head if side == CUTE else T.ent_grub_head
+			sc = 0.5
+			r = 16.0
+		"boss":
+			tex = T.ent_boss
+			sc = 0.72
+			r = 30.0
+	var anywhere := kind in ["wisp", "carver"]
+	var p: Variant = at if at != null else _free_spot(side, r, anywhere)
+	if p == null:
+		return false
+	var ang := rng.randf_range(0.35, 1.22) + PI / 2.0 * rng.randi_range(0, 3)
+	var spd: float = BOUNCER_SPEED * speed * {"basic": 1.0, "stalker": 1.05, "wisp": 0.65, "carver": 0.62, "boss": 0.85}[kind]
+	var s := Sprite2D.new()
+	s.texture = tex
+	s.scale = Vector2.ONE * sc
+	if side == SCARY and kind in ["basic", "stalker", "boss"]:
+		var glow := Sprite2D.new()
+		glow.texture = T.fx_glow
+		glow.scale = Vector2.ONE * (1.5 if kind != "boss" else 3.0)
+		glow.modulate = Color(1, 0.25, 0.1, 0.5)
+		glow.show_behind_parent = true
+		var add := CanvasItemMaterial.new()
+		add.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+		glow.material = add
+		s.add_child(glow)
+	bouncer_layer.add_child(s)
+	var b := {"kind": kind, "side": side, "pos": p, "vel": Vector2(cos(ang), sin(ang)) * spd, "speed": spd,
+		"r": r, "node": s, "phase": rng.randf() * TAU, "base_scale": sc}
+	if kind == "carver":
+		_add_glow(s, Color(1, 0.3, 0.1, 0.6) if side == SCARY else Color(1, 0.75, 0.9, 0.5), 1.0)
+		var segs: Array = []
+		for k in 5:
+			var sg := Sprite2D.new()
+			sg.texture = T.ent_slug_seg if side == CUTE else T.ent_grub_seg
+			sg.scale = Vector2.ONE * (0.5 - k * 0.04)
+			bouncer_layer.add_child(sg)
+			bouncer_layer.move_child(sg, 0)
+			segs.append(sg)
+		b["segs"] = segs
+		b["hist"] = PackedVector2Array([p])
+	bouncers.append(b)
+	return true
+
+
+func _add_glow(parent: Sprite2D, col: Color, size: float) -> void:
+	var glow := Sprite2D.new()
+	glow.texture = T.fx_glow
+	glow.scale = Vector2.ONE * size / parent.scale.x
+	glow.modulate = col
+	glow.show_behind_parent = true
+	var add := CanvasItemMaterial.new()
+	add.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	glow.material = add
+	parent.add_child(glow)
+
+
+func _spawn_item(kind: String, side: int, at: Vector2) -> void:
+	var tex: Texture2D
+	var sc := 0.56
+	match kind:
+		"bomb": tex = T.ent_bomb
+		"charm": tex = T.ent_charm
+		"nest":
+			tex = T.ent_nest_cute if side == CUTE else T.ent_nest_scary
+			sc = 0.62
+		"seed":
+			tex = T.ent_seed_cute if side == CUTE else T.ent_seed_scary
+			sc = 0.6
+	var s := Sprite2D.new()
+	s.texture = tex
+	s.scale = Vector2.ONE * sc
+	s.position = FIELD_POS + at
+	var gcol: Color = {"bomb": Color(1, 0.7, 0.9, 0.55), "charm": Color(0.6, 0.85, 1, 0.6)}.get(kind,
+		Color(1, 0.3, 0.1, 0.6) if side == SCARY else Color(1, 0.75, 0.9, 0.5))
+	_add_glow(s, gcol, 1.25)
+	item_layer.add_child(s)
+	var it := {"kind": kind, "side": side, "pos": at, "node": s, "t": 0.0, "r": 6.0, "armed": false,
+		"fuse": 0.0, "color": 0, "alive": true, "base_scale": sc, "phase": rng.randf() * TAU}
+	items.append(it)
+	# nests and seeds claim a little ground under themselves
+	if kind in ["nest", "seed"]:
+		paint_disc(at, 6.0, side)
+		_upload_mask(false)
+		_recount()
+
+
+func _kill_item(it: Dictionary) -> void:
+	it.alive = false
+	_burst(it.pos, T.fx_sparkle if it.side == SCARY else T.fx_ember, 24, Color.WHITE)
+	audio.play("capture", -2.0)
+	var n: Sprite2D = it.node
+	var tw := create_tween()
+	tw.tween_property(n, "scale", Vector2.ZERO, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	tw.tween_callback(n.queue_free)
+
+
+func _capture(b: Dictionary) -> void:
+	if not bouncers.has(b):
+		return
+	bouncers.erase(b)
+	audio.play("capture", -1.0, 0.1)
+	_burst(b.pos, T.fx_sparkle if b.side == CUTE else T.fx_ember, 30, Color.WHITE)
+	var n: Sprite2D = b.node
+	var tw := create_tween()
+	tw.tween_property(n, "scale", n.scale * 1.6, 0.08)
+	tw.tween_property(n, "scale", Vector2.ZERO, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	tw.tween_callback(func() -> void: _free_bouncer_nodes(b))
+	if mode == "endless":
+		score += 50.0
+
+
+func _arm_bomb(it: Dictionary, color: int) -> void:
+	it.armed = true
+	it.color = color
+	it.fuse = 0.4
+
+
+func _explode(it: Dictionary) -> void:
+	it.alive = false
+	var before := _bomb_cells()
+	paint_disc(it.pos, BOMB_R, it.color)
+	_flip_empty_pockets(it.color)
+	_upload_mask(true, it.pos / FIELD_SIZE)
+	audio.play("bomb", 0.0, 0.05)
+	shake = 1.0
+	_burst(it.pos, T.fx_ember, 46, Color(1, 0.9, 0.7))
+	var p2 := _burst(it.pos, T.fx_sparkle if it.color == CUTE else T.fx_ember, 30, Color.WHITE)
+	p2.initial_velocity_max = 520.0
+	var n: Sprite2D = it.node
+	n.queue_free()
+	# shockwave flash
+	var wave := Sprite2D.new()
+	wave.texture = T.fx_glow
+	wave.position = FIELD_POS + it.pos
+	wave.modulate = Color(1, 0.75, 0.9, 0.95) if it.color == CUTE else Color(1, 0.35, 0.1, 0.95)
+	var add := CanvasItemMaterial.new()
+	add.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	wave.material = add
+	wave.scale = Vector2.ONE * 0.3
+	fx_layer.add_child(wave)
+	var tw := create_tween()
+	tw.tween_property(wave, "scale", Vector2.ONE * BOMB_R * CELL * 2.6 / 128.0, 0.3).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tw.parallel().tween_property(wave, "modulate:a", 0.0, 0.45)
+	tw.tween_callback(wave.queue_free)
+	_after_territory_change(before, it.color)
+	werecat.set_target(scary_percent() / 100.0)
+	if it.color == SCARY:
+		werecat.strike()
+
+
+func _use_charm(it: Dictionary) -> void:
+	it.alive = false
+	freeze_t = FREEZE_TIME
+	audio.play("charm", 0.0)
+	_burst(it.pos, T.fx_sparkle, 36, Color(0.75, 0.9, 1.0))
+	var n: Sprite2D = it.node
+	var tw := create_tween()
+	tw.tween_property(n, "scale", n.scale * 2.0, 0.25)
+	tw.parallel().tween_property(n, "modulate:a", 0.0, 0.25)
+	tw.tween_callback(n.queue_free)
 
 
 # ================================================================ simulation
 
 func _process(delta: float) -> void:
-	clock += delta
+	clock += delta if state == "play" else 0.0
 	if flip_t < 1.0:
 		flip_t = minf(1.0, flip_t + delta * 1.8)
 		field_mat.set_shader_parameter("flip_progress", flip_t)
+	upload_cool -= delta
+	if mask_dirty and flip_t >= 1.0 and upload_cool <= 0.0:
+		_upload_mask(false)
+		upload_cool = 1.0 / 15.0
 	var m := werecat.morph
 	var bm: ShaderMaterial = bg.material
 	bm.set_shader_parameter("morph", m)
 	field_mat.set_shader_parameter("morph", m)
-	if state == "menu":
+	audio.set_morph(m)
+	if state == "title":
 		menu_t += delta
 		var cyc := fmod(menu_t, 9.0)
 		werecat.set_target(0.0 if cyc < 3.5 else 1.0 if cyc < 7.5 else 0.0)
+	elif state == "levels":
+		werecat.set_target(0.0)
 	elif state == "play":
-		step_bouncers(delta)
+		freeze_t = maxf(0.0, freeze_t - delta)
+		step_entities(delta)
+		if state == "play":
+			step_items(delta)
 		if state == "play":
 			if mode == "endless":
 				step_endless(delta)
 			else:
 				step_goal(delta)
+		werecat.set_target(scary_percent() / 100.0)
+	field_mat.set_shader_parameter("freeze", clampf(freeze_t, 0.0, 1.0))
 	bm.set_shader_parameter("hold", hold / HOLD_TIME if mode == "level" and state == "play" else 0.0)
-	_animate_bouncers()
+	_animate_entities()
 	shake = maxf(0.0, shake - delta * 2.5)
 	world.position = Vector2(rng.randf_range(-1, 1), rng.randf_range(-1, 1)) * 10.0 * shake * shake
 	_update_hud()
@@ -874,60 +1517,227 @@ func _process(delta: float) -> void:
 	meter.queue_redraw()
 
 
-func step_bouncers(delta: float) -> void:
-	for b in bouncers:
-		var p: Vector2 = b.pos
-		var v: Vector2 = b.vel
-		var t: int = b.type
-		if type_at(p) != t:
-			p = _unstick(p, t)
-		var nx := p + Vector2(v.x * delta, 0)
-		if _blocked(t, nx + Vector2(signf(v.x) * BOUNCER_R, 0)):
-			v.x = -v.x
-		else:
-			p = nx
-		var ny := p + Vector2(0, v.y * delta)
-		if _blocked(t, ny + Vector2(0, signf(v.y) * BOUNCER_R)):
-			v.y = -v.y
-		else:
-			p = ny
-		b.pos = p
-		b.vel = v
-		if stroke_active and t != stroke_origin and _touches_trail(p):
+func step_entities(delta: float) -> void:
+	if freeze_t > 0.0:
+		# frozen bouncers still snap trails they sit on
+		for b in bouncers:
+			if _threatens(b) and _touches_trail(b.pos, b.r):
+				break_trail()
+				return
+		return
+	for b in bouncers.duplicate():
+		if not bouncers.has(b):
+			continue
+		match b.kind:
+			"wisp":
+				_move_free(b, delta, false)
+			"carver":
+				_move_carver(b, delta)
+			_:
+				_move_confined(b, delta)
+		if _threatens(b) and _touches_trail(b.pos, b.r):
 			break_trail()
 			return
 
 
-func _blocked(type: int, probe: Vector2) -> bool:
-	return not in_field(probe) or type_at(probe) != type
+func _move_confined(b: Dictionary, delta: float) -> void:
+	var p: Vector2 = b.pos
+	var v: Vector2 = b.vel
+	var side: int = b.side
+	if type_at(p) != side:
+		p = _unstick(p, side)
+	if b.kind in ["stalker", "boss"] and stroke_active and side != stroke_origin and stroke_points.size() > 0:
+		var head := stroke_points[stroke_points.size() - 1]
+		var want: Vector2 = (head - p).normalized() * b.speed * 1.15
+		v = v.lerp(want, clampf(delta * 1.6, 0.0, 1.0))
+		if v.length() > 1.0:
+			v = v.normalized() * b.speed * 1.15
+	elif v.length() > b.speed * 1.01:
+		v = v.normalized() * maxf(b.speed, v.length() - 200.0 * delta)
+	var r: float = b.r
+	var nx := p + Vector2(v.x * delta, 0)
+	if _blocked(side, nx + Vector2(signf(v.x) * r, 0)):
+		v.x = -v.x
+	else:
+		p = nx
+	var ny := p + Vector2(0, v.y * delta)
+	if _blocked(side, ny + Vector2(0, signf(v.y) * r)):
+		v.y = -v.y
+	else:
+		p = ny
+	b.pos = p
+	b.vel = v
 
 
-func _unstick(p: Vector2, type: int) -> Vector2:
+func _blocked(side: int, probe: Vector2) -> bool:
+	return not in_field(probe) or type_at(probe) != side
+
+
+func _blocked_free(probe: Vector2) -> bool:
+	return not in_field(probe) or type_at(probe) == STONE
+
+
+func _move_free(b: Dictionary, delta: float, carve: bool) -> void:
+	var p: Vector2 = b.pos
+	var v: Vector2 = b.vel
+	var r: float = b.r
+	# gentle drifting wander
+	v = v.rotated(sin(clock * 0.9 + b.phase) * 0.9 * delta)
+	var nx := p + Vector2(v.x * delta, 0)
+	if _blocked_free(nx + Vector2(signf(v.x) * r, 0)):
+		v.x = -v.x
+	else:
+		p = nx
+	var ny := p + Vector2(0, v.y * delta)
+	if _blocked_free(ny + Vector2(0, signf(v.y) * r)):
+		v.y = -v.y
+	else:
+		p = ny
+	if type_at(p) == STONE:
+		p = _unstick_free(p)
+	b.pos = p
+	b.vel = v
+
+
+func _move_carver(b: Dictionary, delta: float) -> void:
+	_move_free(b, delta, true)
+	var changed := paint_disc(b.pos, 2.8, b.side)
+	if changed > 0:
+		_check_deaths()
+	var hist: PackedVector2Array = b.hist
+	if hist.size() == 0 or hist[hist.size() - 1].distance_to(b.pos) > 2.0:
+		hist.append(b.pos)
+		if hist.size() > 160:
+			hist = hist.slice(hist.size() - 160)
+	b.hist = hist
+
+
+func _unstick(p: Vector2, side: int) -> Vector2:
 	for r in range(1, 40):
 		for a in 16:
 			var q := p + Vector2(cos(a * TAU / 16.0), sin(a * TAU / 16.0)) * r * CELL
-			if in_field(q) and type_at(q) == type:
+			if in_field(q) and type_at(q) == side:
 				return q
 	return p
 
 
-func _animate_bouncers() -> void:
+func _unstick_free(p: Vector2) -> Vector2:
+	for r in range(1, 40):
+		for a in 16:
+			var q := p + Vector2(cos(a * TAU / 16.0), sin(a * TAU / 16.0)) * r * CELL
+			if in_field(q) and type_at(q) != STONE:
+				return q
+	return p
+
+
+func step_items(delta: float) -> void:
+	for it in items.duplicate():
+		if not it.alive:
+			continue
+		it.t += delta
+		match it.kind:
+			"bomb":
+				if it.armed:
+					it.fuse -= delta
+					if it.fuse <= 0.0:
+						_explode(it)
+						if state != "play":
+							return
+			"nest":
+				if freeze_t <= 0.0 and it.t >= NEST_EVERY:
+					it.t = 0.0
+					var n := 0
+					for b in bouncers:
+						if b.side == it.side and b.kind == "basic":
+							n += 1
+					if n < NEST_MAX and type_at(it.pos) == it.side:
+						if _spawn_bouncer("basic", it.side, 1.0, it.pos):
+							audio.play("spawn", -4.0, 0.1)
+							var nd: Sprite2D = it.node
+							var tw := create_tween()
+							tw.tween_property(nd, "scale", Vector2.ONE * it.base_scale * 1.25, 0.08)
+							tw.tween_property(nd, "scale", Vector2.ONE * it.base_scale, 0.2)
+			"seed":
+				if freeze_t <= 0.0 and it.t >= SEED_EVERY:
+					it.t = 0.0
+					it.r = minf(it.r + 2.2, SEED_MAX_R)
+					if paint_disc(it.pos, it.r, it.side) > 0:
+						audio.play("grow", -10.0, 0.1)
+						_check_deaths()
+	items = items.filter(func(x: Dictionary) -> bool: return x.alive or is_instance_valid(x.node))
+
+
+func _animate_entities() -> void:
+	var frozen := freeze_t > 0.0
 	for b in bouncers:
 		var n: Sprite2D = b.node
+		if not is_instance_valid(n):
+			continue
 		n.position = FIELD_POS + b.pos
 		var ph: float = b.phase + clock
-		if b.type == CUTE:
-			var sq := sin(ph * 7.0) * 0.05
-			n.scale = Vector2(0.6 + sq, 0.6 - sq)
-			n.rotation = sin(ph * 2.0) * 0.12
-		else:
-			n.scale = Vector2(0.85, 0.85 * (0.72 + 0.28 * absf(sin(ph * 14.0))))
-			n.rotation = clampf(b.vel.x / BOUNCER_SPEED, -1, 1) * 0.25
+		var sc: float = b.base_scale
+		match b.kind:
+			"basic", "stalker":
+				if b.side == CUTE:
+					var sq := sin(ph * 7.0) * 0.05
+					n.scale = Vector2(sc + sq, sc - sq)
+					n.rotation = sin(ph * 2.0) * 0.12
+				else:
+					var s2 := sc * 1.4 if b.kind == "basic" else sc
+					n.scale = Vector2(s2, s2 * (0.72 + 0.28 * absf(sin(ph * 14.0))))
+					n.rotation = clampf(b.vel.x / BOUNCER_SPEED, -1, 1) * 0.25
+			"boss":
+				n.scale = Vector2(sc, sc * (0.85 + 0.15 * absf(sin(ph * 6.0))))
+				n.rotation = clampf(b.vel.x / BOUNCER_SPEED, -1, 1) * 0.15
+			"wisp":
+				n.scale = Vector2(sc * (1.0 + 0.06 * sin(ph * 5.0)), sc * (1.0 + 0.08 * sin(ph * 5.0 + 1.0)))
+				n.modulate.a = 0.75 + 0.25 * sin(ph * 2.0)
+			"carver":
+				n.rotation = b.vel.angle()
+				n.flip_v = cos(n.rotation) < 0.0
+				var hist: PackedVector2Array = b.hist
+				var segs: Array = b.segs
+				var need := 16.0
+				var acc := 0.0
+				var k := 0
+				var j := hist.size() - 1
+				while k < segs.size() and j > 0:
+					acc += hist[j].distance_to(hist[j - 1])
+					if acc >= need * (k + 1):
+						segs[k].position = FIELD_POS + hist[j - 1]
+						k += 1
+					j -= 1
+				while k < segs.size():
+					segs[k].position = n.position
+					k += 1
+		n.modulate = Color(0.7, 0.85, 1.0, n.modulate.a) if frozen else Color(1, 1, 1, n.modulate.a)
+	for it in items:
+		if not it.alive:
+			continue
+		var n: Sprite2D = it.node
+		var ph: float = it.phase + clock
+		var sc: float = it.base_scale
+		match it.kind:
+			"bomb":
+				if it.armed:
+					var f := 1.0 + 0.25 * absf(sin(clock * 30.0))
+					n.scale = Vector2.ONE * sc * f
+					n.modulate = Color(1.6, 1.2, 1.0)
+				else:
+					n.scale = Vector2.ONE * sc * (1.0 + 0.04 * sin(ph * 3.0))
+					n.rotation = sin(ph * 1.5) * 0.08
+			"charm":
+				n.position = FIELD_POS + it.pos + Vector2(0, sin(ph * 2.0) * 4.0)
+				n.rotation = sin(ph * 1.2) * 0.15
+			"seed":
+				n.scale = Vector2.ONE * sc * (1.0 + 0.07 * sin(ph * 2.5))
+			"nest":
+				n.rotation = sin(ph * 1.7) * 0.05
 
 
 func step_goal(delta: float) -> void:
 	var s := scary_percent()
-	if s >= goal_min and s <= goal_max:
+	if s >= goal_min - 0.0001 and s <= goal_max + 0.0001:
 		hold += delta
 		if hold >= HOLD_TIME:
 			_end(true)
@@ -938,16 +1748,23 @@ func step_goal(delta: float) -> void:
 func step_endless(delta: float) -> void:
 	var center := (goal_min + goal_max) / 2.0
 	center = move_toward(center, band_target, 6.0 * delta)
-	goal_min = center - ENDLESS_BAND / 2.0
-	goal_max = center + ENDLESS_BAND / 2.0
+	goal_min = center - 8.0
+	goal_max = center + 8.0
 	if clock >= next_shift:
-		next_shift += ENDLESS_SHIFT_EVERY
+		next_shift += 12.0
 		band_target = rng.randf_range(15.0, 85.0)
 	if clock >= next_spawn:
-		next_spawn += ENDLESS_SPAWN_EVERY
-		if bouncers.size() < ENDLESS_MAX_BOUNCERS:
-			spawn_bouncer(spawn_type)
-			spawn_type = 1 - spawn_type
+		next_spawn += 25.0
+		spawn_n += 1
+		if bouncers.size() < 9:
+			var kinds := ["basic", "basic", "stalker", "wisp", "carver"]
+			var kind: String = kinds[mini(spawn_n - 1, kinds.size() - 1) if spawn_n < 5 else rng.randi_range(0, kinds.size() - 1)]
+			_spawn_bouncer(kind, spawn_n % 2, 1.0 + clock / 600.0)
+	if clock >= next_item:
+		next_item += 18.0
+		var at: Variant = _free_spot(0, 20.0, true)
+		if at != null:
+			_spawn_item(["bomb", "charm", "bomb", "seed"][rng.randi_range(0, 3)], rng.randi_range(0, 1), at)
 	var s := scary_percent()
 	if s >= goal_min and s <= goal_max:
 		score += 10.0 * delta
@@ -956,22 +1773,23 @@ func step_endless(delta: float) -> void:
 func _update_hud() -> void:
 	if not hud.visible:
 		return
-	lbl_title.text = "ENDLESS" if mode == "endless" else "LEVEL %s" % LEVEL.name
+	lbl_title.text = "ENDLESS" if mode == "endless" else "NIGHT %s" % level.id
 	for i in 3:
-		hearts[i].texture = tex_heart if i < lives else tex_heart_empty
+		hearts[i].texture = T.ui_heart if i < lives else T.ui_heart_empty
 	if mode == "endless":
 		lbl_goal_head.text = "SCORE"
 		lbl_goal.text = "%d" % roundi(score)
 	else:
-		lbl_goal_head.text = "MAKE IT SCARY"
-		lbl_goal.text = "%d–%d%%" % [roundi(goal_min), roundi(goal_max)]
+		var gt := goal_text(goal_min, goal_max)
+		lbl_goal_head.text = gt[0]
+		lbl_goal.text = gt[1]
 
 
 func _on_tier_changed(nt: int, old: int) -> void:
 	if state != "play":
 		return
-	# a ring of embers/sparkles bursting out from behind the werecat
-	var p := _burst(Vector2(360, 236) - FIELD_POS, tex_ember if nt > old else tex_sparkle, 48, Color.WHITE, fx_back)
+	audio.play("tier_up" if nt > old else "tier_down", -3.0)
+	var p := _burst(Vector2(360, 236) - FIELD_POS, T.fx_ember if nt > old else T.fx_sparkle, 48, Color.WHITE, fx_back)
 	p.emission_shape = CPUParticles2D.EMISSION_SHAPE_RING
 	p.emission_ring_radius = 150.0
 	p.emission_ring_inner_radius = 130.0
@@ -990,7 +1808,7 @@ func _burst(field_pt: Vector2, tex: Texture2D, amount: int, tint: Color, parent:
 	p.spread = 180.0
 	p.initial_velocity_min = 120.0
 	p.initial_velocity_max = 320.0
-	p.gravity = Vector2(0, 260) if tex == tex_sparkle else Vector2(0, -160)
+	p.gravity = Vector2(0, 260) if tex == T.fx_sparkle else Vector2(0, -160)
 	p.damping_min = 80.0
 	p.damping_max = 140.0
 	p.scale_amount_min = 0.35

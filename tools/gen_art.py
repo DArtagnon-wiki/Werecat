@@ -561,6 +561,242 @@ def ember(name, size=32):
     render(name, body, defs, size, size)
 
 
+
+# ------------------------------------------------------------------ entities (mechanics)
+
+def _eyes(cx, cy, dx, r, col="#241226", hl=True, glow=None):
+    out = ""
+    for sx in (-1, 1):
+        x = cx + sx * dx
+        if glow:
+            out += f'<circle cx="{x}" cy="{cy}" r="{r * 2.2}" fill="{glow}" opacity="0.55" filter="url(#eb)"/>'
+        out += f'<ellipse cx="{x}" cy="{cy}" rx="{r}" ry="{r * 1.2}" fill="{col}"/>'
+        if hl:
+            out += f'<circle cx="{x - r * 0.35}" cy="{cy - r * 0.45}" r="{r * 0.38}" fill="#FFFFFF"/>'
+    return out
+
+
+def bomb(name="ent_bomb", size=120):
+    defs = radial("bm", [(0, "#5B4A8A", 1), (0.5, "#2C2050", 1), (1, "#120A24", 1)], cx="38%", cy="32%", r="70%")
+    defs += blur_filter("eb", 3) + blur_filter("fz", 4)
+    c = size / 2
+    body = f'<circle cx="{c}" cy="{c + 8}" r="40" fill="url(#bm)" stroke="{INK}" stroke-width="5"/>'
+    # star decal
+    pts = []
+    for k in range(10):
+        a = -math.pi / 2 + k * math.pi / 5
+        r = 14 if k % 2 == 0 else 6
+        pts.append(f"{c + math.cos(a) * r:.1f},{c + 12 + math.sin(a) * r:.1f}")
+    body += f'<polygon points="{" ".join(pts)}" fill="#FFB3CB" stroke="{INK}" stroke-width="2.5" stroke-linejoin="round"/>'
+    body += f'<ellipse cx="{c - 14}" cy="{c - 8}" rx="11" ry="7" fill="#FFFFFF" opacity="0.45" transform="rotate(-30 {c - 14} {c - 8})"/>'
+    # cap + fuse
+    body += f'<rect x="{c - 12}" y="{c - 40}" width="24" height="14" rx="4" fill="#3A2E5A" stroke="{INK}" stroke-width="4"/>'
+    body += f'<path d="M {c} {c - 40} C {c + 4} {c - 52}, {c + 18} {c - 50}, {c + 22} {c - 56}" fill="none" stroke="#C9A06A" stroke-width="5" stroke-linecap="round"/>'
+    body += f'<circle cx="{c + 23}" cy="{c - 57}" r="9" fill="#FFB03A" opacity="0.9" filter="url(#fz)"/>'
+    body += f'<circle cx="{c + 23}" cy="{c - 57}" r="4" fill="#FFF6C0"/>'
+    render(name, body, defs, size, size)
+
+
+def carver(prefix, scary):
+    """Head + body segment sprites for a carving worm."""
+    if scary:
+        g = [(0, "#5A3E58", 1), (0.6, "#2A1A2C", 1), (1, "#120A14", 1)]
+        belly, eye, glow = "#FF5A2E", "#FFC04A", "#FF3A1A"
+    else:
+        g = [(0, "#FFFFFF", 1), (0.5, "#C7F2E4", 1), (1, "#7FD3C0", 1)]
+        belly, eye, glow = "#FF9DBA", INK, None
+    defs = radial("cv", g, cx="40%", cy="30%", r="70%") + blur_filter("eb", 4)
+    # segment
+    seg = ""
+    if scary:
+        for y0, sgn in ((9, 1), (63, -1)):
+            seg += f'<path d="M 28 {y0 + sgn * 4} L 36 {y0 - sgn * 6} L 44 {y0 + sgn * 4} Z" fill="#1A0E1A" stroke="{INK}" stroke-width="3" stroke-linejoin="round"/>'
+    seg += f'<ellipse cx="36" cy="36" rx="24" ry="27" fill="url(#cv)" stroke="{INK}" stroke-width="5"/>'
+    # segment ridges (vertical arcs) + spots
+    for x in (24, 48):
+        seg += f'<path d="M {x} 14 Q {x + (6 if x < 36 else -6)} 36 {x} 58" fill="none" stroke="{INK}" stroke-width="2.5" opacity="0.45"/>'
+    if scary:
+        for cx, cy in ((36, 26), (31, 44), (41, 46)):
+            seg += f'<circle cx="{cx}" cy="{cy}" r="3.2" fill="{belly}" opacity="0.9"/>'
+    else:
+        seg += f'<circle cx="31" cy="25" r="5" fill="#FFFFFF" opacity="0.75"/><circle cx="40" cy="45" r="4" fill="{belly}" opacity="0.6"/>'
+    render(prefix + "_seg", seg, defs, 72, 72)
+    # head (faces +x)
+    head = f'<ellipse cx="50" cy="48" rx="38" ry="34" fill="url(#cv)" stroke="{INK}" stroke-width="5"/>'
+    if scary:
+        head += f'<path d="M 70 58 Q 82 62 88 56 L 84 66 L 78 62 L 74 68 L 70 62 Z" fill="#FFF6E0" stroke="{INK}" stroke-width="3" stroke-linejoin="round"/>'
+        head += _eyes(60, 38, 13, 6, col=eye, hl=False, glow=glow)
+        head += f'<path d="M 44 28 L 76 34" stroke="{INK}" stroke-width="5" stroke-linecap="round"/>'
+        for k, (x, y) in enumerate([(28, 18), (40, 12), (52, 12)]):
+            head += f'<path d="M {x - 6} {y + 10} L {x} {y - 6} L {x + 6} {y + 10} Z" fill="#1A0E1A" stroke="{INK}" stroke-width="3" stroke-linejoin="round"/>'
+    else:
+        head += _eyes(62, 42, 12, 6)
+        head += f'<path d="M 64 60 Q 72 66 80 60" fill="none" stroke="{INK}" stroke-width="3.5" stroke-linecap="round"/>'
+        head += '<ellipse cx="50" cy="56" rx="6" ry="3.5" fill="#FF7FA6" opacity="0.7"/><ellipse cx="82" cy="54" rx="5" ry="3" fill="#FF7FA6" opacity="0.7"/>'
+        head += f'<path d="M 46 18 Q 40 4 30 8" fill="none" stroke="{INK}" stroke-width="4" stroke-linecap="round"/><circle cx="29" cy="8" r="6" fill="#FFB3CB" stroke="{INK}" stroke-width="3"/>'
+    render(prefix + "_head", head, defs, 100, 96)
+
+
+def wisp(name="ent_wisp", size=120):
+    c = size / 2
+    d = (f"M {c} {c + 34} C {c - 30} {c + 34}, {c - 34} {c + 6}, {c - 22} {c - 10} C {c - 14} {c - 22}, {c - 18} {c - 34}, {c - 6} {c - 48} "
+         f"C {c - 4} {c - 34}, {c + 4} {c - 30}, {c + 8} {c - 40} C {c + 14} {c - 26}, {c + 30} {c - 18}, {c + 28} {c + 4} "
+         f"C {c + 30} {c + 26}, {c + 18} {c + 34}, {c} {c + 34} Z")
+    defs = radial("wp", [(0, "#F2FFFF", 1), (0.4, "#8FF0FF", 0.95), (1, "#7A4BD8", 0.85)], cy="65%", r="70%")
+    defs += blur_filter("wb", 8) + blur_filter("eb", 3)
+    body = f'<path d="{d}" fill="#9AF6FF" opacity="0.7" filter="url(#wb)"/>'
+    body += f'<path d="{d}" fill="url(#wp)" stroke="#2A1450" stroke-width="4" stroke-linejoin="round"/>'
+    body += f'<ellipse cx="{c - 9}" cy="{c + 8}" rx="6" ry="9" fill="#1A0838"/><ellipse cx="{c + 9}" cy="{c + 8}" rx="6" ry="9" fill="#1A0838"/>'
+    body += f'<ellipse cx="{c}" cy="{c + 24}" rx="5" ry="4" fill="#1A0838"/>'
+    render(name, body, defs, size, size)
+
+
+def hunter_bat(name="ent_hunter", size=130):
+    d = ("M 65 78 C 54 66, 40 58, 8 52 C 18 60, 20 70, 15 82 C 26 76, 38 79, 42 88 C 48 80, 57 80, 65 86 "
+         "C 73 80, 82 80, 88 88 C 92 79, 104 76, 115 82 C 110 70, 112 60, 122 52 C 90 58, 76 66, 65 78 Z")
+    defs = linear("hb", [(0, "#6A1A2A", 1), (1, "#1A050A", 1)]) + blur_filter("hgl", 7) + blur_filter("eb", 3)
+    body = f'<path d="{d}" fill="#FF2A10" opacity="0.6" filter="url(#hgl)"/>'
+    body += f'<path d="{d}" fill="url(#hb)" stroke="{INK}" stroke-width="3.5" stroke-linejoin="round"/>'
+    # wing ribs
+    for x1, y1 in [(20, 60), (34, 62), (96, 62), (110, 60)]:
+        body += f'<path d="M 65 76 Q {(65 + x1) / 2} {y1 - 4} {x1} {y1}" fill="none" stroke="#0A0204" stroke-width="2" opacity="0.7"/>'
+    # horns + ears
+    body += f'<path d="M 54 66 C 48 52, 46 42, 50 34 C 54 44, 58 52, 60 64 Z M 76 66 C 82 52, 84 42, 80 34 C 76 44, 72 52, 70 64 Z" fill="#120408" stroke="{INK}" stroke-width="2.5" stroke-linejoin="round"/>'
+    body += _eyes(65, 74, 7, 3.6, col="#FFB03A", hl=False, glow="#FF3A1A")
+    body += '<path d="M 60 82 L 62 87 L 64 82 M 66 82 L 68 87 L 70 82" fill="#FFF6E0" stroke="#FFF6E0" stroke-width="1.5"/>'
+    render(name, body, defs, size, size)
+
+
+def huggy_puff(name="ent_huggy", size=110):
+    d, tips = fluffy(55, 58, 30, 28, 16, lambda a: 9, seed=44, droop=0.2)
+    defs = radial("hp", [(0, "#FFFFFF", 1), (0.5, "#FFC2DC", 1), (1, "#F07AAE", 1)], cx="40%", cy="35%", r="70%")
+    defs += blur_filter("eb", 3)
+    body = ""
+    # little reaching arms
+    for sx in (-1, 1):
+        body += f'<path d="M {55 + sx * 26} 62 Q {55 + sx * 44} 50 {55 + sx * 48} 36" fill="none" stroke="{INK}" stroke-width="9" stroke-linecap="round"/>'
+        body += f'<path d="M {55 + sx * 26} 62 Q {55 + sx * 44} 50 {55 + sx * 48} 36" fill="none" stroke="#FFC2DC" stroke-width="4.5" stroke-linecap="round"/>'
+    body += f'<path d="{d}" fill="url(#hp)" stroke="{INK}" stroke-width="3.5" stroke-linejoin="round"/>'
+    for sx in (-1, 1):
+        x = 55 + sx * 10
+        body += (f'<path d="M {x} 60 C {x - 9} 53, {x - 8} 45, {x - 3} 46 C {x - 1} 46, {x} 48, {x} 49 '
+                 f'C {x} 48, {x + 1} 46, {x + 3} 46 C {x + 8} 45, {x + 9} 53, {x} 60 Z" fill="#E0204E" stroke="{INK}" stroke-width="1.8"/>')
+    body += f'<path d="M 50 67 Q 55 72 60 67" fill="none" stroke="{INK}" stroke-width="2.5" stroke-linecap="round"/>'
+    render(name, body, defs, size, size)
+
+
+def nest(name, scary, size=130):
+    c = size / 2
+    defs = blur_filter("eb", 3) + blur_filter("ng", 8)
+    if scary:
+        defs += radial("ns1", [(0, "#4A2A3E", 1), (1, "#160A12", 1)], cy="35%")
+        body = f'<ellipse cx="{c}" cy="{c + 6}" rx="44" ry="50" fill="#FF3A1A" opacity="0.35" filter="url(#ng)"/>'
+        body += f'<path d="M {c} {c - 50} C {c + 40} {c - 44}, {c + 48} {c + 30}, {c} {c + 54} C {c - 48} {c + 30}, {c - 40} {c - 44}, {c} {c - 50} Z" fill="url(#ns1)" stroke="{INK}" stroke-width="5"/>'
+        for k in range(5):
+            y = c - 30 + k * 16
+            body += f'<path d="M {c - 34 + abs(k - 2) * 4} {y} Q {c} {y + 8} {c + 34 - abs(k - 2) * 4} {y}" fill="none" stroke="#0A0408" stroke-width="3" opacity="0.8"/>'
+        body += f'<ellipse cx="{c}" cy="{c + 8}" rx="18" ry="22" fill="#0A0206" stroke="{INK}" stroke-width="3"/>'
+        body += _eyes(c, c + 8, 7, 3.5, col="#FFB03A", hl=False, glow="#FF3A1A")
+        body += f'<path d="M {c} {c - 50} L {c} {c - 62}" stroke="{INK}" stroke-width="5" stroke-linecap="round"/>'
+    else:
+        defs += linear("gb", [(0, "#C9F2FF", 1), (1, "#8FC8F0", 1)]) + linear("rb", [(0, "#FF9DBA", 1), (1, "#E0577F", 1)])
+        body = f'<rect x="{c - 36}" y="{c - 14}" width="72" height="58" rx="8" fill="url(#gb)" stroke="{INK}" stroke-width="5"/>'
+        body += f'<rect x="{c - 42}" y="{c - 30}" width="84" height="22" rx="7" fill="url(#gb)" stroke="{INK}" stroke-width="5"/>'
+        body += f'<rect x="{c - 7}" y="{c - 30}" width="14" height="74" fill="url(#rb)" stroke="{INK}" stroke-width="3.5"/>'
+        body += f'<path d="M {c} {c - 32} C {c - 30} {c - 64}, {c - 40} {c - 30}, {c} {c - 32} C {c + 40} {c - 30}, {c + 30} {c - 64}, {c} {c - 32} Z" fill="url(#rb)" stroke="{INK}" stroke-width="4" stroke-linejoin="round"/>'
+        body += _eyes(c - 18, c + 16, 0, 0.1)  # (placeholder for symmetry)
+        body += f'<circle cx="{c - 20}" cy="{c + 4}" r="5" fill="#FFFFFF" opacity="0.55"/>'
+    render(name, body, defs, size, size)
+
+
+def seed(name, scary, size=100):
+    c = size / 2
+    defs = blur_filter("sgl", 7)
+    if scary:
+        defs += radial("sd", [(0, "#5A2A3A", 1), (1, "#14060C", 1)], cy="35%")
+        body = f'<circle cx="{c}" cy="{c}" r="30" fill="#FF3A1A" opacity="0.45" filter="url(#sgl)"/>'
+        for k in range(8):
+            a = k * math.pi / 4
+            body += (f'<path d="M {c + math.cos(a - 0.25) * 22:.1f} {c + math.sin(a - 0.25) * 22:.1f} L {c + math.cos(a) * 44:.1f} {c + math.sin(a) * 44:.1f} '
+                     f'L {c + math.cos(a + 0.25) * 22:.1f} {c + math.sin(a + 0.25) * 22:.1f} Z" fill="#1A0810" stroke="{INK}" stroke-width="3" stroke-linejoin="round"/>')
+        body += f'<ellipse cx="{c}" cy="{c}" rx="24" ry="28" fill="url(#sd)" stroke="{INK}" stroke-width="4.5"/>'
+        body += f'<path d="M {c} {c - 22} Q {c + 6} {c} {c} {c + 22}" fill="none" stroke="{EMBER}" stroke-width="3" opacity="0.9"/>'
+    else:
+        defs += radial("sd", [(0, "#FFFFFF", 1), (0.5, "#FFC2DC", 1), (1, "#F07AAE", 1)], cy="35%")
+        body = f'<circle cx="{c}" cy="{c}" r="32" fill="#FFB3E0" opacity="0.5" filter="url(#sgl)"/>'
+        for k in range(5):
+            a = -math.pi / 2 + k * 2 * math.pi / 5
+            px, py = c + math.cos(a) * 18, c + math.sin(a) * 18
+            body += f'<ellipse cx="{px:.1f}" cy="{py:.1f}" rx="15" ry="11" transform="rotate({math.degrees(a):.0f} {px:.1f} {py:.1f})" fill="url(#sd)" stroke="{INK}" stroke-width="3.5"/>'
+        body += f'<circle cx="{c}" cy="{c}" r="11" fill="#FFE27A" stroke="{INK}" stroke-width="3.5"/>'
+        body += f'<circle cx="{c - 3}" cy="{c - 3}" r="3.5" fill="#FFFFFF" opacity="0.8"/>'
+    render(name, body, defs, size, size)
+
+
+def charm(name="ent_charm", size=110):
+    c = size / 2
+    defs = radial("ch", [(0, "#FFFFFF", 1), (0.5, "#CFEFFF", 1), (1, "#7CB8F0", 1)], cx="35%", cy="35%", r="70%")
+    defs += blur_filter("cgl", 9)
+    moon = (f"M {c + 10} {c - 34} A 36 36 0 1 0 {c + 10} {c + 34} "
+            f"A 30 30 0 0 1 {c + 10} {c - 34} Z")
+    body = f'<circle cx="{c}" cy="{c}" r="40" fill="#9FDCFF" opacity="0.55" filter="url(#cgl)"/>'
+    body += f'<path d="{moon}" fill="url(#ch)" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>'
+    body += f'<path d="M {c + 20} {c - 16} l 3 8 l 8 3 l -8 3 l -3 8 l -3 -8 l -8 -3 l 8 -3 Z" fill="#FFFFFF" stroke="{INK}" stroke-width="2"/>'
+    body += f'<circle cx="{c - 14}" cy="{c - 14}" r="4" fill="#FFFFFF" opacity="0.8"/>'
+    render(name, body, defs, size, size)
+
+
+def boss_bat(name="ent_boss", size=220):
+    d = ("M 110 130 C 92 108, 66 96, 10 86 C 28 100, 30 116, 22 138 C 42 128, 62 132, 70 148 C 80 134, 96 134, 110 144 "
+         "C 124 134, 140 134, 150 148 C 158 132, 178 128, 198 138 C 190 116, 192 100, 210 86 C 154 96, 128 108, 110 130 Z")
+    defs = linear("bb", [(0, "#4A1030", 1), (1, "#12040C", 1)]) + blur_filter("bgl2", 12) + blur_filter("eb", 4)
+    body = f'<path d="{d}" fill="#FF2A10" opacity="0.55" filter="url(#bgl2)"/>'
+    body += f'<path d="{d}" fill="url(#bb)" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>'
+    for x1, y1 in [(30, 100), (52, 104), (168, 104), (190, 100)]:
+        body += f'<path d="M 110 128 Q {(110 + x1) / 2} {y1 - 6} {x1} {y1}" fill="none" stroke="#06010A" stroke-width="3" opacity="0.7"/>'
+    # crown of horns
+    for k, (x, h) in enumerate([(88, 40), (99, 54), (110, 62), (121, 54), (132, 40)]):
+        body += f'<path d="M {x - 6} 116 L {x} {116 - h} L {x + 6} 116 Z" fill="#1A0410" stroke="{INK}" stroke-width="3" stroke-linejoin="round"/>'
+    body += f'<ellipse cx="110" cy="124" rx="26" ry="20" fill="#2A0A1A" stroke="{INK}" stroke-width="4"/>'
+    for x in (98, 110, 122):
+        body += f'<ellipse cx="{x}" cy="{120 if x != 110 else 112}" rx="9" ry="9" fill="#FF3A1A" opacity="0.6" filter="url(#eb)"/>'
+        body += f'<ellipse cx="{x}" cy="{120 if x != 110 else 112}" rx="4" ry="5" fill="#FFC04A"/>'
+    body += '<path d="M 100 134 L 103 144 L 106 134 M 114 134 L 117 144 L 120 134" fill="#FFF6E0" stroke="#FFF6E0" stroke-width="2"/>'
+    render(name, body, defs, size, size)
+
+
+def ui_icons():
+    star = "M 32 4 L 40 23 L 60 24 L 44 37 L 50 57 L 32 46 L 14 57 L 20 37 L 4 24 L 24 23 Z"
+    defs = radial("st", [(0, "#FFF6C0", 1), (0.6, "#FFD25A", 1), (1, "#F0A020", 1)], cy="35%")
+    render("ui_star", f'<path d="{star}" fill="url(#st)" stroke="{INK}" stroke-width="4.5" stroke-linejoin="round"/>'
+           '<ellipse cx="25" cy="22" rx="5" ry="3" fill="#FFFFFF" opacity="0.7" transform="rotate(-30 25 22)"/>', defs, 64, 64)
+    render("ui_star_empty", f'<path d="{star}" fill="#3A2440" stroke="{INK}" stroke-width="4.5" stroke-linejoin="round"/>', "", 64, 64)
+    lock = (f'<path d="M 20 30 L 20 22 C 20 10, 44 10, 44 22 L 44 30" fill="none" stroke="{INK}" stroke-width="10" stroke-linecap="round"/>'
+            f'<path d="M 20 30 L 20 22 C 20 10, 44 10, 44 22 L 44 30" fill="none" stroke="#9A8AA8" stroke-width="5" stroke-linecap="round"/>'
+            f'<rect x="12" y="28" width="40" height="30" rx="6" fill="#6A5A7A" stroke="{INK}" stroke-width="4.5"/>'
+            f'<circle cx="32" cy="42" r="5" fill="{INK}"/>')
+    render("ui_lock", lock, "", 64, 64)
+    pause = (f'<circle cx="32" cy="32" r="28" fill="#3A1640" stroke="{INK}" stroke-width="5"/>'
+             f'<rect x="21" y="19" width="8" height="26" rx="3" fill="#FFFFFF"/><rect x="35" y="19" width="8" height="26" rx="3" fill="#FFFFFF"/>')
+    render("ui_pause", pause, "", 64, 64)
+
+
+def entities():
+    bomb()
+    carver("ent_grub", True)
+    carver("ent_slug", False)
+    wisp()
+    hunter_bat()
+    huggy_puff()
+    nest("ent_nest_scary", True)
+    nest("ent_nest_cute", False)
+    seed("ent_seed_scary", True)
+    seed("ent_seed_cute", False)
+    charm()
+    boss_bat()
+    ui_icons()
+
+
 # ------------------------------------------------------------------ main
 
 LAYERS = {
@@ -600,4 +836,5 @@ if __name__ == "__main__":
     sparkle("fx_sparkle", "#FFB3E0")
     ember("fx_ember")
     soft_glow("fx_glow")
+    entities()
     print("ok", len(LAYERS) + len(ARM_PIVOTS) + 6, "sprites")

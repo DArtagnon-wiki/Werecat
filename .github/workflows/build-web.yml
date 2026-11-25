@@ -55,6 +55,10 @@ jobs:
         timeout-minutes: 3
         run: ~/godot/godot --headless --path . -s res://tests/smoke_test.gd
 
+      - name: Bot playtest (every level must be winnable)
+        timeout-minutes: 6
+        run: ~/godot/godot --headless --path . -s res://tests/bot_test.gd
+
       - name: Export web build
         run: |
           mkdir -p build/web
