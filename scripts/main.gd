@@ -25,6 +25,8 @@ const GROW_SPEED := 380.0        # px/s for each of the two growing ends
 const CURL_ORDER := ["straight", "arc", "curly", "true"]
 const CURL_RATE := {"arc": 0.35, "curly": 2.2}
 const CURL_NAMES := {"straight": "straight", "arc": "gentle arcs", "curly": "curly", "true": "free"}
+const CURL_AIM_DIST := 28.0      # finger must move this far before a limited line picks its heading
+const CURL_GRACE := 40.0         # a limited line can't close on your own ground before this much enemy travel
 const BOUNCER_SPEED := 170.0
 const HOLD_TIME := 3.0
 const WC_SCALE := 0.58
@@ -115,6 +117,8 @@ var tip_heading := 0.0
 var tip_len := 0.0
 var ray_anchor := Vector2.ZERO
 var last_finger := Vector2.ZERO
+var tip_aimed := false
+var tip_enemy_len := 0.0
 var leash: Line2D
 # growth: after a path closes, the wall grows along it from both ends
 var growing := false
@@ -1209,6 +1213,8 @@ func move_stroke(p: Vector2) -> void:
 				ray_anchor = last_origin_pt
 				tip_heading = (p - last_origin_pt).angle()
 				tip_len = 0.0
+				tip_enemy_len = 0.0
+				tip_aimed = false
 				last_finger = last_origin_pt
 				_chase(p)
 		elif inside and type_at(p) == stroke_origin:
@@ -1231,6 +1237,16 @@ func move_stroke(p: Vector2) -> void:
 ## finger pushes it forward. Returns after closing (growth starts).
 func _chase(finger: Vector2) -> void:
 	var step := 4.0
+	# Aim from intent: wait until the finger is clearly past the anchor,
+	# then take the heading from anchor to finger (not from the first,
+	# shallow border crossing).
+	if not tip_aimed:
+		if finger.distance_to(ray_anchor) < CURL_AIM_DIST:
+			leash.points = PackedVector2Array([tip, finger])
+			return
+		tip_aimed = true
+		tip_heading = (finger - ray_anchor).angle()
+		last_finger = ray_anchor
 	if curl_mode == "straight":
 		var dir := Vector2.from_angle(tip_heading)
 		var want := maxf(tip_len, (finger - ray_anchor).dot(dir))
@@ -1264,7 +1280,11 @@ func _tip_step() -> bool:
 	if q.distance_to(stroke_points[stroke_points.size() - 1]) >= 3.0 or out:
 		_extend_trail(q)
 	var t := type_at(q)
-	if out or t == stroke_origin or t == STONE:
+	if t == 1 - stroke_origin:
+		tip_enemy_len += 4.0
+	# grace: early wobbles back over your own ground don't close the line
+	var closes_on_home := t == stroke_origin and tip_enemy_len >= CURL_GRACE
+	if out or closes_on_home or t == STONE:
 		leash.clear_points()
 		start_growth()
 		return true

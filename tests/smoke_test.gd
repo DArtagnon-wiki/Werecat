@@ -286,6 +286,35 @@ func run() -> void:
 	check(max_turn < deg_to_rad(0.35) * 1.6, "arc curl: the line can't turn sharper than the limit (%.2f deg/px)" % rad_to_deg(max_turn))
 	g._clear_stroke()
 
+	# limited-curl lines must not "bonk" (close instantly) when started near
+	# the border with a natural thumb swoop
+	var rng2 := RandomNumberGenerator.new()
+	rng2.seed = 3
+	var bonks := 0
+	for t in 60:
+		setup({"curl": ["arc", "curly", "straight"][t % 3]})
+		var sx := rng2.randf_range(80, 560)
+		var st := Vector2(sx, 372 - rng2.randf_range(10, 50))
+		var sd := 1.0 if rng2.randf() < 0.5 else -1.0
+		var hh := rng2.randf_range(0.25, 1.3)
+		var bend := rng2.randf_range(0.004, 0.012)
+		g.begin_stroke(st)
+		var pp := st
+		for k in 120:
+			hh = minf(hh + bend * 6.0, 1.45)
+			pp += Vector2(cos(hh) * sd, sin(hh)) * 6.0
+			g.move_stroke(pp)
+			if not g.stroking:
+				break
+		var ln := 0.0
+		var gp: PackedVector2Array = g.grow_pts if g.growing else g.stroke_points
+		for k in range(1, gp.size()):
+			ln += gp[k].distance_to(gp[k - 1])
+		if g.growing and ln < 80.0:
+			bonks += 1
+		g._clear_stroke()
+	check(bonks <= 3, "limited-curl lines started near the border rarely bonk (%d / 60)" % bonks)
+
 	# ---------------------------------------------------------------- zones
 	setup({"zones": [{"kind": "hold", "side": 1, "at": Vector2(0.5, 0.25), "r": 0.12}]})
 	check(g.holds_left() == 1 and not g.objectives_done(), "an unheld hold-zone blocks the win")
