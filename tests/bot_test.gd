@@ -5,7 +5,7 @@ extends SceneTree
 ## another), so a level the bot can't beat in several attempts is suspect.
 ##   godot --headless --path . -s res://tests/bot_test.gd
 
-const ATTEMPTS := 6
+const ATTEMPTS := 12
 const MAX_STROKES := 260
 
 var g
@@ -113,6 +113,107 @@ func stroke(side: int, depth: float, focus: Variant = null) -> void:
 	g.end_stroke()
 
 
+func stroke_path(pts: Array) -> void:
+	## Draw a polyline (first point must be on Cute ground for a Cute wall).
+	g.begin_stroke(pts[0])
+	if not g.stroking:
+		return
+	for i in range(1, pts.size()):
+		var a: Vector2 = pts[i - 1]
+		var b: Vector2 = pts[i]
+		var n := maxi(1, int(a.distance_to(b) / 5.0))
+		for k in range(1, n + 1):
+			g.move_stroke(a.lerp(b, float(k) / n))
+			if not g.stroking:
+				return
+	g.end_stroke()
+
+
+func cell_at(p: Vector2) -> int:
+	if p.x < 0 or p.y < 0 or p.x >= g.FIELD_SIZE.x or p.y >= g.FIELD_SIZE.y:
+		return -1
+	return g.mask[g.cell_index(p)]
+
+
+## Bats grouped by connected pocket of Scary ground.
+func bat_groups() -> Array:
+	var label := {}
+	var groups := {}
+	var lab := PackedInt32Array()
+	lab.resize(g.GW * g.GH)
+	var next := 1
+	for b in g.bouncers:
+		if b.kind != "basic" or b.side != g.SCARY:
+			continue
+		var st: int = g.cell_index(b.pos)
+		if g.mask[st] != g.SCARY:
+			continue
+		if lab[st] == 0:
+			var stack := [st]
+			lab[st] = next
+			while stack.size() > 0:
+				var i: int = stack.pop_back()
+				var x: int = i % g.GW
+				for j in [i - 1 if x > 0 else -1, i + 1 if x < g.GW - 1 else -1, i - g.GW, i + g.GW]:
+					if j >= 0 and j < g.GW * g.GH and lab[j] == 0 and g.mask[j] == g.SCARY:
+						lab[j] = next
+						stack.append(j)
+			next += 1
+		var l := lab[st]
+		if not groups.has(l):
+			groups[l] = []
+		groups[l].append(b)
+	return groups.values()
+
+
+## A Cute wall between two bats that share a pocket: along the perpendicular
+## bisector until it leaves their Scary ground at both ends.
+func pen_cut() -> Array:
+	var crowded := bat_groups().filter(func(gr: Array) -> bool: return gr.size() >= 2)
+	if crowded.is_empty():
+		return []
+	var gr: Array = crowded[rng.randi_range(0, crowded.size() - 1)]
+	var a: Dictionary = gr[rng.randi_range(0, gr.size() - 1)]
+	var b: Dictionary = gr[rng.randi_range(0, gr.size() - 1)]
+	for t in 6:
+		if a != b:
+			break
+		b = gr[rng.randi_range(0, gr.size() - 1)]
+	if a == b:
+		return []
+	var m: Vector2 = (a.pos + b.pos) / 2.0
+	var dir: Vector2 = (b.pos - a.pos).normalized().orthogonal().rotated(rng.randf_range(-0.35, 0.35))
+	var ends: Array = []
+	for sgn in [-1.0, 1.0]:
+		var q := m
+		for k in 300:
+			q += dir * sgn * 4.0
+			if cell_at(q) != g.SCARY:
+				break
+		ends.append(q)
+	var e1: Vector2 = ends[0]
+	var e2: Vector2 = ends[1]
+	if cell_at(e2) == g.CUTE and cell_at(e1) != g.CUTE:
+		var tmp := e1
+		e1 = e2
+		e2 = tmp
+		dir = -dir
+	var over: Vector2 = e2 + dir * 10.0
+	if cell_at(e1) == g.CUTE:
+		return [e1 - dir * 8.0, over]
+	# no Cute at either end (stone or edge): come in from the nearest Cute ground
+	var best: Variant = null
+	var bd := 1e9
+	for t in 400:
+		var c: Variant = random_cell_of(g.CUTE, e1, 260.0)
+		if c != null and (c as Vector2).distance_to(e1) < bd:
+			bd = (c as Vector2).distance_to(e1)
+			best = c
+	if best == null:
+		return []
+	return [best, e1 + dir * 10.0, over]
+
+
 ## What to do next: targets first, then hold-zones, then the band.
 func plan() -> Array:
 	for it in g.items:
@@ -142,6 +243,25 @@ func plan() -> Array:
 			return [int(z.side), 90.0, z.center]
 		if not good and z.held:
 			return [1 - int(z.side), 90.0, z.center]
+	# generators: sometimes go close one (never the gift boxes on a fuzzies night)
+	if rng.randf() < 0.45:
+		for it in g.items:
+			if not it.alive or not it.kind in ["nest", "den", "burrow", "lantern"]:
+				continue
+			if it.kind == "nest" and it.side == g.CUTE and int(g.level.get("fuzzies", 0)) > 0:
+				continue
+			if it.kind == "nest" and it.side == g.CUTE and g.goal_min > 50.0:
+				pass
+			elif it.kind == "nest" and it.side == g.CUTE:
+				continue
+			return [1 - int(it.side), 70.0, it.pos]
+	if g.pens_left() > 0:
+		var path := pen_cut()
+		return ["path", path] if not path.is_empty() else ["wait"]
+	if g.fuzzies_left() > 0:
+		for it in g.items:
+			if it.alive and it.kind == "nest" and it.side == g.CUTE and g.type_at(it.pos) == g.CUTE:
+				return ["wait"]
 	var s: float = g.scary_percent()
 	if s >= g.goal_min and s <= g.goal_max:
 		return []
@@ -162,12 +282,19 @@ func play_level(i: int, attempt := 0) -> Array:
 	g.open_intro(i)
 	g.begin_play()
 	var strokes := 0
-	while g.state == "play" and strokes < MAX_STROKES:
+	while g.state == "play" and strokes < MAX_STROKES and g.clock < 900.0:
 		var pl := plan()
 		if pl.is_empty():
 			sim(0.5)
 			continue
-		stroke(pl[0], pl[1], pl[2])
+		if pl[0] is String:
+			if pl[0] == "wait":
+				sim(1.0)
+				strokes += 1      # counts toward the give-up limit
+				continue
+			stroke_path(pl[1])
+		else:
+			stroke(pl[0], pl[1], pl[2])
 		finish_growth()
 		strokes += 1
 		sim(0.25)

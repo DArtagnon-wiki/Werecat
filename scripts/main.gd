@@ -35,9 +35,16 @@ const CAPTURE_FRAC := 0.025
 const CAPTURE_FRAC_BY_KIND := {"elite": 0.07, "boss": 0.04}
 const BOMB_R := 22.0             # cells
 const FREEZE_TIME := 4.0
-const NEST_EVERY := 6.5
-const NEST_MAX := 5
 const SEED_EVERY := 2.0
+# Generators: item kind -> creature it hatches, seconds between hatches, and
+# the cap on that creature (per side; wisps count both sides).
+const SPAWNERS := {
+	"nest": {"kind": "basic", "every": 6.5, "cap": 5},
+	"den": {"kind": "stalker", "every": 9.0, "cap": 3},
+	"burrow": {"kind": "carver", "every": 9.0, "cap": 3},
+	"lantern": {"kind": "wisp", "every": 11.0, "cap": 2},
+}
+const ROOTED := ["nest", "den", "burrow", "lantern", "seed", "idol"]   # die when their ground flips
 const SEED_MAX_R := 46.0
 
 const CUTE := 0
@@ -231,6 +238,7 @@ func _ready() -> void:
 			"ent_bomb", "ent_charm", "ent_wisp", "ent_hunter", "ent_huggy", "ent_boss", "ent_nest_scary", "ent_nest_cute",
 			"ent_seed_scary", "ent_seed_cute", "ent_grub_head", "ent_grub_seg", "ent_slug_head", "ent_slug_seg",
 			"ui_star", "ui_star_empty", "ui_lock", "ui_pause", "ent_idol_cute", "ent_idol_scary", "ent_crown",
+			"ent_den_scary", "ent_den_cute", "ent_burrow_scary", "ent_burrow_cute", "ent_lantern",
 			"zi_hold", "zi_swift", "zi_slow", "zi_straight", "zi_arc", "zi_curly", "zi_true", "zi_haste", "zi_calm"]:
 		T[n] = load("res://assets/sprites/%s.png" % n)
 	font_ui = _font("res://assets/fonts/Fredoka.ttf", 500)
@@ -1232,6 +1240,16 @@ func _tip_icon(tip: String) -> Texture2D:
 		"slug": return T.ent_slug_head
 		"seed": return T.ent_seed_scary
 		"nest": return T.ent_nest_scary
+		"gift", "fuzzies": return T.ent_nest_cute
+		"den": return T.ent_den_scary
+		"huggy": return T.ent_den_cute
+		"burrow": return T.ent_burrow_scary
+		"candy": return T.ent_burrow_cute
+		"lantern": return T.ent_lantern
+		"pens", "pen2": return T.bouncer_bat
+		"maze", "shores": return T.ui_lock
+		"shepherd": return T.bouncer_puff
+		"swarm": return T.ent_nest_scary
 		"wisp": return T.ent_wisp
 		"stalker": return T.ent_hunter
 		"boss": return T.ent_boss
@@ -1254,6 +1272,7 @@ func _tip_icon(tip: String) -> Texture2D:
 
 func begin_play() -> void:
 	mode = "level"
+	lose_reason = ""
 	_load_layout(level)
 	_spawn_level_entities(level)
 	_build_zones(level)
@@ -1337,7 +1356,7 @@ func _end(won: bool) -> void:
 		audio.play("win", -1.0)
 	else:
 		lbl_over_title.text = "The Werecat is displeased"
-		lbl_over_sub.text = "Out of lives. Try again?"
+		lbl_over_sub.text = (lose_reason + ". Try again?") if lose_reason != "" else "Out of lives. Try again?"
 		btn_next.visible = false
 		audio.play("lose", -2.0)
 	_save()
@@ -1874,7 +1893,7 @@ func _after_territory_change(bomb_before: Dictionary, color: int) -> void:
 
 func _check_deaths() -> void:
 	for it in items:
-		if it.alive and it.kind in ["nest", "seed", "idol"] and type_at(it.pos) == 1 - int(it.side):
+		if it.alive and it.kind in ROOTED and type_at(it.pos) == 1 - int(it.side):
 			_kill_item(it)
 	for b in bouncers.duplicate():
 		if b.kind == "carver" and type_at(b.pos) == 1 - int(b.side):
@@ -2146,6 +2165,15 @@ func _spawn_item(kind: String, side: int, at: Vector2) -> void:
 		"nest":
 			tex = T.ent_nest_cute if side == CUTE else T.ent_nest_scary
 			sc = 0.62
+		"den":
+			tex = T.ent_den_cute if side == CUTE else T.ent_den_scary
+			sc = 0.62
+		"burrow":
+			tex = T.ent_burrow_cute if side == CUTE else T.ent_burrow_scary
+			sc = 0.6
+		"lantern":
+			tex = T.ent_lantern
+			sc = 0.6
 		"seed":
 			tex = T.ent_seed_cute if side == CUTE else T.ent_seed_scary
 			sc = 0.6
@@ -2164,7 +2192,7 @@ func _spawn_item(kind: String, side: int, at: Vector2) -> void:
 		"fuse": 0.0, "color": 0, "alive": true, "base_scale": sc, "phase": rng.randf() * TAU}
 	items.append(it)
 	# nests and seeds claim a little ground under themselves
-	if kind in ["nest", "seed", "idol"]:
+	if kind in ROOTED:
 		paint_disc(at, 7.0 if kind == "idol" else 6.0, side)
 		_upload_mask(false)
 		_recount()
@@ -2429,15 +2457,16 @@ func step_items(delta: float) -> void:
 						_explode(it)
 						if state != "play":
 							return
-			"nest":
-				if freeze_t <= 0.0 and it.t >= NEST_EVERY:
+			"nest", "den", "burrow", "lantern":
+				var sp: Dictionary = SPAWNERS[it.kind]
+				if freeze_t <= 0.0 and it.t >= float(sp.every):
 					it.t = 0.0
 					var n := 0
 					for b in bouncers:
-						if b.side == it.side and b.kind == "basic":
+						if b.kind == sp.kind and (b.side == it.side or sp.kind == "wisp"):
 							n += 1
-					if n < NEST_MAX and type_at(it.pos) == it.side:
-						if _spawn_bouncer("basic", it.side, 1.0, it.pos):
+					if n < spawn_cap(sp, int(it.side)) and type_at(it.pos) == it.side:
+						if _spawn_bouncer(sp.kind, it.side, 1.0, it.pos):
 							audio.play("spawn", -4.0, 0.1)
 							var nd: Sprite2D = it.node
 							var tw := create_tween()
@@ -2517,11 +2546,19 @@ func _animate_entities() -> void:
 				n.rotation = sin(ph * 1.2) * 0.15
 			"seed":
 				n.scale = Vector2.ONE * sc * (1.0 + 0.07 * sin(ph * 2.5))
-			"nest":
+			"nest", "den", "burrow":
 				n.rotation = sin(ph * 1.7) * 0.05
+			"lantern":
+				n.position = FIELD_POS + it.pos + Vector2(0, sin(ph * 1.6) * 3.0)
+				n.rotation = sin(ph * 1.1) * 0.12
 
 
 func step_goal(delta: float) -> void:
+	var why := impossible_reason()
+	if why != "":
+		lose_reason = why
+		_end(false)
+		return
 	var s := scary_percent()
 	if not objectives_done():
 		hold = 0.0
@@ -2661,7 +2698,119 @@ func holds_left() -> int:
 
 
 func objectives_done() -> bool:
-	return targets_left() == 0 and holds_left() == 0
+	return targets_left() == 0 and holds_left() == 0 and pens_left() == 0 and fuzzies_left() == 0
+
+
+## Hatch cap for a generator. Gift boxes on a "need N fuzzies" night can
+## hatch enough to reach the goal plus a couple spare.
+func spawn_cap(sp: Dictionary, side: int) -> int:
+	var cap := int(sp.cap)
+	if sp.kind == "basic" and side == CUTE and mode == "level":
+		cap = maxi(cap, int(level.get("fuzzies", 0)) + 2)
+	return cap
+
+
+func fuzzy_count() -> int:
+	var n := 0
+	for b in bouncers:
+		if b.kind == "basic" and b.side == CUTE:
+			n += 1
+	return n
+
+
+func fuzzies_left() -> int:
+	if mode != "level":
+		return 0
+	return maxi(0, int(level.get("fuzzies", 0)) - fuzzy_count())
+
+
+var lose_reason := ""
+
+
+## A night that can no longer be won ends right away instead of stalling.
+func impossible_reason() -> String:
+	if mode != "level":
+		return ""
+	if fuzzies_left() > 0 and not _can_hatch("basic", CUTE):
+		return "No fuzzies left to hatch"
+	var need := int(level.get("pens", 0))
+	if need > 0:
+		var bats := 0
+		for b in bouncers:
+			if b.kind == "basic" and b.side == SCARY:
+				bats += 1
+		if bats < need and not _can_hatch("basic", SCARY):
+			return "Not enough bats left to pen"
+	return ""
+
+
+func _can_hatch(kind: String, side: int) -> bool:
+	for it in items:
+		if it.alive and SPAWNERS.has(it.kind) and SPAWNERS[it.kind].kind == kind and int(it.side) == side:
+			return true
+	return false
+
+
+var _pens_serial := -1
+var _pens_bats := -1
+var lone_bats: Array = []   # bats that are alone in their own pocket of Scary ground
+
+
+## Bats (Scary basics) alone in their own connected pocket of Scary ground.
+## Recomputed only when the ground or the number of bats changes.
+func update_lone_bats() -> void:
+	var bats: Array = []
+	for b in bouncers:
+		if b.kind == "basic" and b.side == SCARY:
+			bats.append(b)
+	if _pens_serial == mask_serial and _pens_bats == bats.size():
+		return
+	_pens_serial = mask_serial
+	_pens_bats = bats.size()
+	lone_bats.clear()
+	var label := PackedInt32Array()
+	label.resize(GW * GH)
+	var next := 1
+	var counts := {}
+	var first := {}
+	var stack := PackedInt32Array()
+	for b in bats:
+		var start := cell_index(b.pos)
+		if start < 0 or mask[start] != SCARY:
+			continue
+		if label[start] == 0:
+			label[start] = next
+			stack.append(start)
+			while not stack.is_empty():
+				var i: int = stack[stack.size() - 1]
+				stack.remove_at(stack.size() - 1)
+				var x := i % GW
+				if x > 0 and label[i - 1] == 0 and mask[i - 1] == SCARY:
+					label[i - 1] = next
+					stack.append(i - 1)
+				if x < GW - 1 and label[i + 1] == 0 and mask[i + 1] == SCARY:
+					label[i + 1] = next
+					stack.append(i + 1)
+				if i >= GW and label[i - GW] == 0 and mask[i - GW] == SCARY:
+					label[i - GW] = next
+					stack.append(i - GW)
+				if i < GW * (GH - 1) and label[i + GW] == 0 and mask[i + GW] == SCARY:
+					label[i + GW] = next
+					stack.append(i + GW)
+			next += 1
+		var l := label[start]
+		counts[l] = int(counts.get(l, 0)) + 1
+		first[l] = b
+	for l in counts:
+		if counts[l] == 1:
+			lone_bats.append(first[l])
+
+
+func pens_left() -> int:
+	if mode != "level" or int(level.get("pens", 0)) == 0:
+		return 0
+	update_lone_bats()
+	return maxi(0, int(level.pens) - lone_bats.size())
 
 
 func _draw_zones() -> void:
@@ -2698,6 +2847,13 @@ func _draw_zones() -> void:
 	for b in bouncers:
 		if b.kind == "elite":
 			_reticle(FIELD_POS + b.pos, 34.0)
+	if mode == "level" and int(level.get("pens", 0)) > 0:
+		update_lone_bats()
+		for b in lone_bats:
+			if is_instance_valid(b.node):
+				var c: Vector2 = FIELD_POS + b.pos
+				zone_layer.draw_arc(c, 27.0, 0, TAU, 32, INK, 7.0, true)
+				zone_layer.draw_arc(c, 27.0, 0, TAU, 32, GOLD, 3.5, true)
 
 
 ## Word label under (or over, near the bottom edge) each zone: which color
@@ -2839,6 +2995,11 @@ func _objective_text() -> String:
 				held += 1 if z.held else 0
 		if n > 0:
 			parts.append("%s ring%s %d/%d" % ["Cute" if side == CUTE else "Scary", "s" if n > 1 else "", held, n])
+	if int(level.get("pens", 0)) > 0:
+		update_lone_bats()
+		parts.append("Lone bats %d/%d" % [mini(lone_bats.size(), int(level.pens)), int(level.pens)])
+	if int(level.get("fuzzies", 0)) > 0:
+		parts.append("Fuzzies %d/%d" % [fuzzy_count(), int(level.fuzzies)])
 	var total_t := int(level.get("_targets", 0))
 	if total_t > 0:
 		parts.append("Targets %d/%d" % [total_t - targets_left(), total_t])

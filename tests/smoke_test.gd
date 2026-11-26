@@ -354,6 +354,42 @@ func run() -> void:
 	grow_out()
 	check(not g.bouncers.has(el) and g.targets_left() == 0, "trapping the crowned creature clears the target")
 
+	# ---------------------------------------------------------------- generators + new win conditions
+	for spec in [["den", g.SCARY, "stalker"], ["burrow", g.CUTE, "carver"], ["lantern", g.SCARY, "wisp"]]:
+		setup({"items": [{"kind": spec[0], "side": spec[1], "at": Vector2(0.5, 0.2 if spec[1] == g.CUTE else 0.8)}]})
+		sim(12.0)
+		var hatched: int = g.bouncers.filter(func(b): return b.kind == spec[2]).size()
+		check(hatched >= 1, "a %s hatches %ss (%d)" % [spec[0], spec[2], hatched])
+	setup({"items": [{"kind": "den", "side": g.SCARY, "at": Vector2(0.5, 0.8)}]})
+	g.paint_disc(Vector2(320, 595), 14, g.CUTE)
+	g._check_deaths()
+	check(not g.items[0].alive, "claiming a den's ground closes it")
+
+	setup({"fuzzies": 3, "goal": [0, 100], "items": [{"kind": "nest", "side": g.CUTE, "at": Vector2(0.5, 0.2)}]})
+	check(g.fuzzies_left() == 3 and not g.objectives_done(), "a fuzzies night needs its fuzzies")
+	sim(22.0)
+	check(g.fuzzy_count() >= 3 and g.fuzzies_left() == 0, "gift boxes hatch fuzzies past the goal (%d)" % g.fuzzy_count())
+
+	setup({"fuzzies": 2, "goal": [0, 100]})
+	g.step_goal(0.1)
+	check(g.state == "lost" and g.lose_reason.begins_with("No fuzzies"), "a fuzzies night with no fuzzies and no gift box ends at once")
+
+	setup({"pens": 2, "goal": [0, 100]})
+	var b1 := add_b("basic", g.SCARY, Vector2(150, 600), Vector2.ZERO)
+	var b2 := add_b("basic", g.SCARY, Vector2(490, 600), Vector2.ZERO)
+	check(g.pens_left() == 2, "two bats sharing one pocket aren't lone")
+	draw([Vector2(320, 300), Vector2(320, 740)])
+	g.end_stroke()
+	grow_out()
+	check(g.bouncers.has(b1) and g.bouncers.has(b2) and g.pens_left() == 0, "a wall between them pens each bat alone")
+
+	var mz: PackedByteArray = Levels.build({"layout": ["split_h", 0.5], "stone": ["maze", 4, 5, 7]}, g.GW, g.GH)[0]
+	var mz2: PackedByteArray = Levels.build({"layout": ["split_h", 0.5], "stone": ["maze", 4, 5, 7]}, g.GW, g.GH)[0]
+	var stones := 0
+	for v in mz:
+		stones += 1 if v == g.STONE else 0
+	check(mz == mz2 and stones > 500, "mazes are deterministic and solid (%d stone cells)" % stones)
+
 	# ---------------------------------------------------------------- all levels
 	var lv_ok := true
 	for i in g.levels.size():
@@ -367,8 +403,8 @@ func run() -> void:
 		if g.bouncers.size() != want:
 			printerr("  level %s: spawned %d of %d bouncers" % [lv.id, g.bouncers.size(), want])
 			lv_ok = false
-		if s0 >= lv.goal[0] and s0 <= lv.goal[1]:
-			printerr("  level %s starts inside its goal band (%.1f%%)" % [lv.id, s0])
+		if s0 >= lv.goal[0] and s0 <= lv.goal[1] and g.objectives_done():
+			printerr("  level %s starts solved (%.1f%% in band, objectives done)" % [lv.id, s0])
 			lv_ok = false
 		var alive := 0
 		for it in g.items:
@@ -385,7 +421,7 @@ func run() -> void:
 					lv_ok = false
 		print("  level %s %-16s start %4.1f%%  goal %d-%d  bouncers %d" % [lv.id, lv.name, s0, lv.goal[0], lv.goal[1], want])
 	check(lv_ok, "all %d levels load, spawn everything, don't start solved, and simulate cleanly" % g.levels.size())
-	check(g.levels.size() == 30, "there are 30 levels")
+	check(g.levels.size() == 100, "there are 100 levels")
 
 	# ---------------------------------------------------------------- graphics tiers + perf paths
 	setup()

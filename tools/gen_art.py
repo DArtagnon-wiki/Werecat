@@ -733,6 +733,96 @@ def seed(name, scary, size=100):
     render(name, body, defs, size, size)
 
 
+def den(name, scary, size=130):
+    """Hunter den (Scary): rocky cave with a cluster of eyes. Huggy hut (Cute):
+    a marshmallow igloo with a heart door."""
+    c = size / 2
+    defs = blur_filter("eb", 3) + blur_filter("dg", 8)
+    if scary:
+        defs += radial("dr", [(0, "#5A4660", 1), (0.6, "#2E2236", 1), (1, "#140C18", 1)], cy="30%", r="75%")
+        d = (f"M {c - 54} {c + 40} C {c - 58} {c + 6}, {c - 44} {c - 28}, {c - 22} {c - 40} L {c - 12} {c - 52} L {c - 2} {c - 42} "
+             f"L {c + 10} {c - 54} L {c + 20} {c - 38} C {c + 42} {c - 30}, {c + 58} {c + 4}, {c + 54} {c + 40} Z")
+        body = f'<ellipse cx="{c}" cy="{c + 16}" rx="56" ry="40" fill="#FF3A1A" opacity="0.32" filter="url(#dg)"/>'
+        body += f'<path d="{d}" fill="url(#dr)" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>'
+        for x0, y0, x1, y1 in [(c - 40, c - 6, c - 24, c - 18), (c + 26, c - 16, c + 42, c), (c - 8, c - 30, c + 6, c - 24)]:
+            body += f'<path d="M {x0} {y0} L {x1} {y1}" stroke="#0A060C" stroke-width="3" stroke-linecap="round" opacity="0.8"/>'
+        body += f'<path d="M {c - 30} {c + 41} C {c - 30} {c - 4}, {c + 30} {c - 4}, {c + 30} {c + 41} Z" fill="#070308" stroke="{INK}" stroke-width="4"/>'
+        body += _eyes(c - 10, c + 14, 6, 3.2, col="#FFB03A", hl=False, glow="#FF3A1A")
+        body += _eyes(c + 12, c + 26, 5, 2.6, col="#FF7A2A", hl=False, glow="#FF3A1A")
+        body += f'<ellipse cx="{c - 22}" cy="{c - 24}" rx="9" ry="4" fill="#FFFFFF" opacity="0.18" transform="rotate(-25 {c - 22} {c - 24})"/>'
+    else:
+        defs += radial("dh", [(0, "#FFFFFF", 1), (0.55, "#FFD3E6", 1), (1, "#F59AC0", 1)], cx="38%", cy="30%", r="75%")
+        body = f'<ellipse cx="{c}" cy="{c + 14}" rx="56" ry="40" fill="#FFB3E0" opacity="0.45" filter="url(#dg)"/>'
+        body += f'<path d="M {c - 50} {c + 40} C {c - 54} {c - 30}, {c + 54} {c - 30}, {c + 50} {c + 40} Z" fill="url(#dh)" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>'
+        for y, half in ((c + 2, 34), (c + 18, 44), (c + 32, 48)):
+            body += f'<path d="M {c - half} {y} Q {c} {y - 9} {c + half} {y}" fill="none" stroke="#E68AB3" stroke-width="2.5" opacity="0.7"/>'
+        hx, hy = c, c + 18
+        body += (f'<path d="M {hx} {hy + 23} C {hx - 26} {hy + 6}, {hx - 22} {hy - 18}, {hx - 8} {hy - 16} C {hx - 3} {hy - 15}, {hx} {hy - 11}, {hx} {hy - 8} '
+                 f'C {hx} {hy - 11}, {hx + 3} {hy - 15}, {hx + 8} {hy - 16} C {hx + 22} {hy - 18}, {hx + 26} {hy + 6}, {hx} {hy + 23} Z" fill="#5A1E3A" stroke="{INK}" stroke-width="4" stroke-linejoin="round"/>')
+        body += _eyes(hx, hy + 2, 7, 3.4, col="#FFFFFF", hl=False)
+        body += f'<circle cx="{c - 24}" cy="{c - 2}" r="6" fill="#FFFFFF" opacity="0.7"/>'
+        body += f'<path d="M {c} {c - 12} L {c} {c - 28}" stroke="{INK}" stroke-width="4" stroke-linecap="round"/><circle cx="{c}" cy="{c - 32}" r="6" fill="#FF7AAE" stroke="{INK}" stroke-width="3"/>'
+    render(name, body, defs, size, size)
+
+
+def burrow(name, scary, size=120):
+    """Grub burrow (Scary): an ember-cracked soil mound with feelers.
+    Candy burrow (Cute): a swirled sugar mound with sprinkles."""
+    c = size / 2
+    defs = blur_filter("eb", 3) + blur_filter("bg", 7)
+    mound = f"M {c - 50} {c + 30} C {c - 46} {c - 8}, {c - 22} {c - 26}, {c} {c - 26} C {c + 22} {c - 26}, {c + 46} {c - 8}, {c + 50} {c + 30} Z"
+    if scary:
+        defs += radial("bs", [(0, "#4A2A22", 1), (1, "#160806", 1)], cy="30%", r="75%")
+        body = f'<ellipse cx="{c}" cy="{c + 14}" rx="52" ry="30" fill="#FF3A1A" opacity="0.38" filter="url(#bg)"/>'
+        body += f'<path d="{mound}" fill="url(#bs)" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>'
+        for x0, y0, x1, y1, x2, y2 in [(c - 34, c + 22, c - 24, c + 8, c - 30, c - 4), (c + 28, c + 24, c + 22, c + 8, c + 34, c - 2)]:
+            body += f'<path d="M {x0} {y0} L {x1} {y1} L {x2} {y2}" fill="none" stroke="{EMBER}" stroke-width="3" stroke-linejoin="round" opacity="0.9"/>'
+        body += f'<ellipse cx="{c}" cy="{c + 6}" rx="18" ry="11" fill="#060203" stroke="{INK}" stroke-width="3.5"/>'
+        for sx in (-1, 1):
+            body += f'<path d="M {c + sx * 6} {c + 2} Q {c + sx * 14} {c - 22} {c + sx * 24} {c - 30}" fill="none" stroke="{INK}" stroke-width="4" stroke-linecap="round"/>'
+            body += f'<circle cx="{c + sx * 24}" cy="{c - 31}" r="4.5" fill="{EMBER_HOT}" stroke="{INK}" stroke-width="2"/>'
+    else:
+        defs += radial("bc", [(0, "#FFFFFF", 1), (0.5, "#FFE0EE", 1), (1, "#F7A3C8", 1)], cx="40%", cy="30%", r="75%")
+        body = f'<ellipse cx="{c}" cy="{c + 14}" rx="52" ry="30" fill="#FFB3E0" opacity="0.45" filter="url(#bg)"/>'
+        body += f'<path d="{mound}" fill="url(#bc)" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>'
+        body += f'<path d="M {c - 40} {c + 14} C {c - 20} {c - 2}, {c + 20} {c - 2}, {c + 40} {c + 14}" fill="none" stroke="#9FD8F5" stroke-width="5" stroke-linecap="round" opacity="0.85"/>'
+        rnd = random.Random(5)
+        for k in range(9):
+            x = c + rnd.uniform(-36, 36)
+            y = c + rnd.uniform(-16, 22)
+            a = rnd.uniform(0, 180)
+            col = ["#FF7AAE", "#7FD3F0", "#FFE27A", "#B58CFF"][k % 4]
+            body += f'<rect x="{x - 4:.1f}" y="{y - 1.6:.1f}" width="8" height="3.2" rx="1.6" fill="{col}" transform="rotate({a:.0f} {x:.1f} {y:.1f})"/>'
+        body += f'<ellipse cx="{c}" cy="{c + 8}" rx="17" ry="10" fill="#5A1E3A" stroke="{INK}" stroke-width="3.5"/>'
+        body += f'<circle cx="{c - 20}" cy="{c - 12}" r="5" fill="#FFFFFF" opacity="0.75"/>'
+    render(name, body, defs, size, size)
+
+
+def lantern(name="ent_lantern", size=120):
+    """Wisp lantern: an iron lantern with a ghostly cyan flame that has a face."""
+    c = size / 2
+    defs = blur_filter("lg", 10) + blur_filter("fl", 3)
+    defs += linear("lgl", [(0, "#BFFBFF", 0.55), (1, "#5AC8E8", 0.35)])
+    defs += radial("lfl", [(0, "#FFFFFF", 1), (0.45, "#9AF6FF", 1), (1, "#4A8AE0", 0.9)], cy="70%", r="65%")
+    body = f'<circle cx="{c}" cy="{c + 6}" r="44" fill="#7FF0FF" opacity="0.45" filter="url(#lg)"/>'
+    # handle ring + cap
+    body += f'<path d="M {c - 12} {c - 38} C {c - 12} {c - 56}, {c + 12} {c - 56}, {c + 12} {c - 38}" fill="none" stroke="{INK}" stroke-width="5" stroke-linecap="round"/>'
+    body += f'<path d="M {c - 26} {c - 26} L {c - 16} {c - 40} L {c + 16} {c - 40} L {c + 26} {c - 26} Z" fill="#3A2E5A" stroke="{INK}" stroke-width="4" stroke-linejoin="round"/>'
+    # glass + frame
+    body += f'<rect x="{c - 24}" y="{c - 26}" width="48" height="56" rx="7" fill="url(#lgl)" stroke="{INK}" stroke-width="5"/>'
+    flame = (f"M {c} {c + 22} C {c - 16} {c + 22}, {c - 18} {c + 4}, {c - 10} {c - 6} C {c - 6} {c - 12}, {c - 6} {c - 18}, {c - 1} {c - 24} "
+             f"C {c + 2} {c - 16}, {c + 8} {c - 14}, {c + 10} {c - 6} C {c + 18} {c + 4}, {c + 16} {c + 22}, {c} {c + 22} Z")
+    body += f'<path d="{flame}" fill="url(#lfl)" stroke="#2A1450" stroke-width="2.5" stroke-linejoin="round"/>'
+    body += f'<ellipse cx="{c - 5}" cy="{c + 8}" rx="2.6" ry="3.8" fill="#1A0838"/><ellipse cx="{c + 5}" cy="{c + 8}" rx="2.6" ry="3.8" fill="#1A0838"/>'
+    body += f'<ellipse cx="{c}" cy="{c + 16}" rx="2.4" ry="2" fill="#1A0838"/>'
+    for x in (c - 24, c + 24):
+        body += f'<line x1="{x}" y1="{c - 26}" x2="{x}" y2="{c + 30}" stroke="{INK}" stroke-width="5"/>'
+    body += f'<line x1="{c}" y1="{c - 26}" x2="{c}" y2="{c - 22}" stroke="{INK}" stroke-width="3"/>'
+    body += f'<rect x="{c - 28}" y="{c + 28}" width="56" height="10" rx="4" fill="#3A2E5A" stroke="{INK}" stroke-width="4"/>'
+    body += f'<rect x="{c - 18}" y="{c - 20}" width="6" height="40" rx="3" fill="#FFFFFF" opacity="0.35"/>'
+    render(name, body, defs, size, size)
+
+
 def charm(name="ent_charm", size=110):
     c = size / 2
     defs = radial("ch", [(0, "#FFFFFF", 1), (0.5, "#CFEFFF", 1), (1, "#7CB8F0", 1)], cx="35%", cy="35%", r="70%")
@@ -792,6 +882,11 @@ def entities():
     nest("ent_nest_cute", False)
     seed("ent_seed_scary", True)
     seed("ent_seed_cute", False)
+    den("ent_den_scary", True)
+    den("ent_den_cute", False)
+    burrow("ent_burrow_scary", True)
+    burrow("ent_burrow_cute", False)
+    lantern()
     charm()
     boss_bat()
     ui_icons()

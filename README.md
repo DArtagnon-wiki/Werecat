@@ -4,7 +4,7 @@ A Cute vs. Scary territory puzzle game for tweens (creepy and menacing, no gore)
 
 **How it plays:** the only walls are the field's border. Put your finger down in one territory and draw any shape into the other: that's a safe blueprint. When it gets back to your own side, the edge or moonstone, the real wall grows along it from both ends. If anything touches a grown section before the ends meet, the wall snaps and you lose a heart. When they meet, pockets touching the new wall that have no bouncer inside flip to your color, and bouncers squeezed into tiny pockets next to it are trapped. Pockets elsewhere are never affected. Lifting your finger before closing is free. Hold the meter inside the gold band for 3 seconds to win the night.
 
-**30 nights in 6 worlds**, each teaching something new:
+**100 nights in 20 worlds**, each teaching something new:
 
 | World | Theme | Teaches |
 | --- | --- | --- |
@@ -14,8 +14,26 @@ A Cute vs. Scary territory puzzle game for tweens (creepy and menacing, no gore)
 | 4 · Hallowed Ground | Rules that change | Shrines (bless/curse), line curl: straight, arcs, curly |
 | 5 · Blood Moon | Hunters of the night | Idols, crowned creatures, wisps, hunters, the Night Mother |
 | 6 · The Hunt | Mastery | Remixes of everything, ending with The Last Idol |
+| 7 · Gift Boxes | Fuzzies to keep | Gift boxes hatch fuzzies; win needs N fuzzies alive |
+| 8 · Strange Shores | New ground shapes | Diagonals, donuts, archipelagos, waves, an hourglass |
+| 9 · Hunter Dens | Generators that hunt | Dens (hunter bats) and huggy huts (huggy puffs) |
+| 10 · Burrows | Tunnelers on tap | Grub burrows and candy burrows |
+| 11 · Lantern Light | Wisps on tap | Wisp lanterns |
+| 12 · Stone Halls | Geometry | Corridors, peg grids, a vault, a diamond hall, a maze |
+| 13 · Bat Pens | Lone bats | Win needs N bats each alone in its own Scary pocket; doors between stone rooms |
+| 14 · Shepherd | Fuzzies and lone bats | Keeping fuzzies while penning bats |
+| 15 · Swarm | Generators everywhere | Many generators at once, the Hive Queen |
+| 16 · Holy Orders | Rings and generators | Hold rings and shrines guarded by generators |
+| 17 · Bone Yard | Targets with backup | Idols and crowned creatures with generators |
+| 18 · Labyrinth | Mazes | Mazes with straight lines, a hunter, lone bats |
+| 19 · Eclipse | Everything mixed | Mixed objectives on new shapes |
+| 20 · Midnight | The gauntlet | Remixes, ending with Midnight |
 
-Each world goes introduce, develop, twist, combine, finale. Difficulty is tuned with the bot's measured win rate: about 97% in World 1 down to about 55% in World 6, with world finales the hardest night of each world.
+Each world goes introduce, develop, twist, combine, finale. Worlds 1-6 are tuned with the bot's measured win rate (about 97% in World 1 down to about 55% in World 6). Worlds 7-20 have a first tuning pass: the bot beats every night, and walkovers and near-impossible nights were adjusted, but the curve within those worlds still needs human playtesting.
+
+A night that can no longer be won ends at once with the reason (for example, no fuzzies left and no gift box to hatch more).
+
+**Generators** keep hatching until their ground flips: bat roosts and gift boxes (bats / fuzzies), hunter dens and huggy huts (hunters), grub and candy burrows (carvers), and wisp lanterns (wisps, both sides, max 2).
 
 A color can never be wiped out: if a claim would take a color's last ground, its biggest pocket survives as a foothold.
 
@@ -75,13 +93,13 @@ The web export is single-threaded (`variant/thread_support=false`), so it runs o
 | Path | What |
 | --- | --- |
 | `scripts/main.gd` | Game: claims, entities and mechanics, goal band, Endless, all screens, save file |
-| `scripts/levels.gd` | The 20 levels, mechanic tips, and starting-layout generators |
+| `scripts/levels.gd` | The 100 levels, mechanic tips, and the territory and stone layout generators (splits, islands, checkers, rings, spirals, diagonals, donuts, blobs, frames, waves, hourglass; pillars, chambers, mazes, bars, pegs, rocks, box, diamond, comb) |
 | `scripts/audio.gd` | Music crossfade (cute ↔ scary by morph) and the SFX voice pool |
 | `scripts/werecat.gd` | Layered werecat rig: 5 morph tiers, blink, glow, drool, mantis strikes |
 | `shaders/` | Territory (smooth organic edges, dissolve), night sky + moon, trail ribbon |
 | `assets/sprites/` | Rendered art (generated, don't hand-edit) |
 | `assets/fonts/` | Fredoka and Grenze Gotisch (SIL Open Font License) |
-| `tests/` | Headless smoke tests run in CI |
+| `tests/` | Headless smoke tests and the bot playtest (run in CI); `level_sheet.gd` renders every starting layout to `build/levels.png` |
 | `export_presets.cfg` | Export presets (Web for now; Android and iOS later) |
 | `tools/gen_audio.py` | Composes and synthesizes all music and SFX from math (needs numpy, scipy, ffmpeg) |
 | `assets/audio/` | Generated music loops and sound effects (OGG) |
