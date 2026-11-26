@@ -159,6 +159,7 @@ func _ready() -> void:
 	stars.fill(0)
 	audio = GameAudio.new()
 	add_child(audio)
+	audio.focus_changed.connect(_on_focus_changed)
 	_load_save()
 	audio.set_enabled(sound_on)
 	_build_scene()
@@ -182,6 +183,22 @@ func _layout() -> void:
 	bm.set_shader_parameter("moon_center", Vector2(360, 236) + stage_off + Vector2(40, 40))
 	bm.set_shader_parameter("ground_y", 1240.0 + stage_off.y)
 	world.position = stage_off
+
+
+func _notification(what: int) -> void:
+	match what:
+		NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_WM_WINDOW_FOCUS_OUT, NOTIFICATION_APPLICATION_PAUSED:
+			_on_focus_changed(false)
+		NOTIFICATION_APPLICATION_FOCUS_IN, NOTIFICATION_WM_WINDOW_FOCUS_IN, NOTIFICATION_APPLICATION_RESUMED:
+			_on_focus_changed(true)
+
+
+## Going to the background mutes everything and pauses a level in progress.
+func _on_focus_changed(has_focus: bool) -> void:
+	if audio:
+		audio.set_focus(has_focus)
+	if not has_focus and state == "play":
+		_pause()
 
 
 func _font(path: String, weight: int) -> FontVariation:

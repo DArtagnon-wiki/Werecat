@@ -14,6 +14,8 @@ var streams := {}
 var enabled := true
 var morph := 0.0
 var music_level := 1.0   # ducked during menus/results
+var focused := true
+var _js_visibility_cb   # keeps the JS callback alive
 
 
 func _ready() -> void:
@@ -28,6 +30,44 @@ func _ready() -> void:
 	music_cute.play()
 	music_scary.play()
 	_apply_volumes()
+	# Browsers keep Web Audio running in background tabs, and Godot's main
+	# loop stops there, so react to the page being hidden directly from JS.
+	if OS.has_feature("web"):
+		_js_visibility_cb = JavaScriptBridge.create_callback(_on_js_visibility)
+		var doc = JavaScriptBridge.get_interface("document")
+		doc.addEventListener("visibilitychange", _js_visibility_cb)
+		var win = JavaScriptBridge.get_interface("window")
+		win.addEventListener("blur", _js_visibility_cb)
+		win.addEventListener("focus", _js_visibility_cb)
+		win.addEventListener("pagehide", _js_visibility_cb)
+
+
+func _on_js_visibility(_args: Array) -> void:
+	var hidden: bool = JavaScriptBridge.eval("document.hidden || !document.hasFocus()", true)
+	set_focus(not hidden)
+	focus_changed.emit(not hidden)
+
+
+signal focus_changed(has_focus: bool)
+
+
+## Silence everything while the page/app is in the background.
+func set_focus(f: bool) -> void:
+	if f == focused:
+		return
+	focused = f
+	print("[audio] focus=%s" % f)
+	AudioServer.set_bus_mute(0, not f)
+	if not f:
+		for v in voices:
+			v.stop()
+	_update_paused()
+
+
+func _update_paused() -> void:
+	if music_cute:
+		music_cute.stream_paused = not (enabled and focused)
+		music_scary.stream_paused = not (enabled and focused)
 
 
 func _music(path: String) -> AudioStreamPlayer:
@@ -52,9 +92,7 @@ func set_morph(m: float) -> void:
 
 func set_enabled(on: bool) -> void:
 	enabled = on
-	if music_cute:
-		music_cute.stream_paused = not on
-		music_scary.stream_paused = not on
+	_update_paused()
 	_apply_volumes()
 
 
@@ -95,7 +133,7 @@ func _process(delta: float) -> void:
 
 
 func play(n: String, vol_db := 0.0, pitch_var := 0.0) -> void:
-	if not enabled or not streams.has(n):
+	if not enabled or not focused or not streams.has(n):
 		return
 	var p: AudioStreamPlayer = voices[next_voice]
 	next_voice = (next_voice + 1) % voices.size()
