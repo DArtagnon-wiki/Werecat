@@ -33,7 +33,7 @@ const TIPS := {
 	"finale": ["World finale", "Everything from this world, all at once. Take it one claim at a time."],
 	"remix": ["The Hunt", "No new tricks tonight, just old ones in new company. Read the field before you draw."],
 	"lastidol": ["The Last Idol", "Two idols, a crowned bat, a cursed shrine and ground to hold. Break the curse first."],
-	"hold": ["Hold the ground", "The flagged ring must be yours to win: fill it 60% with its color, and keep it that way."],
+	"hold": ["Hold the ground", "A flagged ring must be held to win. Its label says which color: fill it 60% with that color, and keep it that way."],
 	"shrine": ["Shrines", "While its color holds a shrine, it changes the rules. Take this one for Cute and your walls grow fast."],
 	"curl": ["Straight lines", "Tonight your lines only go straight: aim, then push. Take the quill shrine for Cute to free them."],
 	"arcs": ["Gentle arcs", "Your line turns slowly tonight and trails your finger like a leash. Plan wide curves."],

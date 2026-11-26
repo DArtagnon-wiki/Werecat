@@ -2668,10 +2668,9 @@ func _draw_zones() -> void:
 	for z in zones:
 		var c: Vector2 = FIELD_POS + z.center
 		var r: float = z.r
-		var aligned := Color(1, 0.85, 0.95) if z.side == CUTE else Color(1, 0.42, 0.15)
-		var cur := type_at(z.center)
-		var fill := Color(1, 0.8, 0.92, 0.10) if z.frac >= 0.5 and z.side == CUTE or z.frac < 0.5 and z.side == SCARY else Color(1, 0.3, 0.1, 0.12)
-		zone_layer.draw_circle(c, r, fill)
+		# the ring wears the color it wants: hot pink = make it Cute, ember = make it Scary
+		var aligned := Color(1, 0.42, 0.74) if z.side == CUTE else Color(1, 0.42, 0.12)
+		zone_layer.draw_circle(c, r, Color(aligned, 0.10))
 		# rotating dashed ring
 		var n := 28
 		var spin := clock * (0.25 if z.kind == "hold" else -0.25)
@@ -2691,6 +2690,7 @@ func _draw_zones() -> void:
 		var isz := 58.0 + (6.0 * sin(clock * 3.0) if z.held else 0.0)
 		zone_layer.draw_texture_rect(icon, Rect2(c - Vector2(isz, isz) / 2.0, Vector2(isz, isz)), false,
 			Color(1, 1, 1, 1.0 if z.held else 0.75))
+		_zone_badge(z, c, r)
 	# reticles around must-destroy targets
 	for it in items:
 		if it.alive and it.kind == "idol":
@@ -2698,6 +2698,32 @@ func _draw_zones() -> void:
 	for b in bouncers:
 		if b.kind == "elite":
 			_reticle(FIELD_POS + b.pos, 34.0)
+
+
+## Word label under (or over, near the bottom edge) each zone: which color
+## it needs. Turns gold with a pulse once that color holds it.
+func _zone_badge(z: Dictionary, c: Vector2, r: float) -> void:
+	var cute: bool = z.side == CUTE
+	var text := ("CUTE" if cute else "SCARY") if z.held else ("MAKE CUTE" if cute else "MAKE SCARY")
+	if z.kind == "shrine":
+		text = "CUTE" if cute else "SCARY"
+	var fs := 22
+	var w := font_ui_bold.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 26.0
+	var h := 34.0
+	var y := c.y + r + 18.0
+	if y + h > FIELD_POS.y + FIELD_SIZE.y - 6.0:
+		y = c.y - r - 18.0 - h
+	var rect := Rect2(c.x - w / 2.0, y, w, h)
+	var bgc := Color("ffd0e4") if cute else Color("3a0812")
+	var fg := INK if cute else Color("ff8a4a")
+	var edge := GOLD if z.held else (Color("ff6fae") if cute else Color("ff5a2e"))
+	if z.held:
+		rect = rect.grow(1.5 * sin(clock * 6.0))
+	_rrect(zone_layer, rect.grow(3.0), h / 2.0 + 3.0, INK)
+	_rrect(zone_layer, rect, h / 2.0, bgc)
+	_rrect(zone_layer, rect, h / 2.0, edge, false, 3.0)
+	zone_layer.draw_string(font_ui_bold, Vector2(rect.position.x, rect.position.y + h / 2.0 + fs * 0.36),
+		text, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x, fs, fg)
 
 
 func _reticle(c: Vector2, r: float) -> void:
@@ -2804,12 +2830,15 @@ func _status_text() -> String:
 
 func _objective_text() -> String:
 	var parts: Array = []
-	var total_holds := 0
-	for z in zones:
-		if z.kind == "hold":
-			total_holds += 1
-	if total_holds > 0:
-		parts.append("Hold %d/%d" % [total_holds - holds_left(), total_holds])
+	for side in [CUTE, SCARY]:
+		var n := 0
+		var held := 0
+		for z in zones:
+			if z.kind == "hold" and z.side == side:
+				n += 1
+				held += 1 if z.held else 0
+		if n > 0:
+			parts.append("%s ring%s %d/%d" % ["Cute" if side == CUTE else "Scary", "s" if n > 1 else "", held, n])
 	var total_t := int(level.get("_targets", 0))
 	if total_t > 0:
 		parts.append("Targets %d/%d" % [total_t - targets_left(), total_t])
