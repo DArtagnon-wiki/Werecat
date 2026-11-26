@@ -935,6 +935,10 @@ func _tip_icon(tip: String) -> Texture2D:
 		"idol": return T.ent_idol_scary
 		"idols": return T.ent_idol_cute
 		"elite": return T.ent_crown
+		"finale": return T.ui_star
+		"remix": return T.zi_hold
+		"lastidol": return T.ent_idol_scary
+		"balance": return T.zi_arc
 	return T.ui_star
 
 

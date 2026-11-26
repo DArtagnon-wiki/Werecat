@@ -176,6 +176,27 @@ func play_level(i: int, attempt := 0) -> Array:
 
 func run() -> void:
 	var args := OS.get_cmdline_user_args()
+	if args.size() >= 1 and args[0] == "range":
+		# tuning mode: -- range <first> <last> <tries>
+		for li in range(int(args[1]), int(args[2]) + 1):
+			var n := int(args[3])
+			var wins := 0
+			var strokes: Array = []
+			var times: Array = []
+			for t in n:
+				rng.seed = 900 + t
+				var r := play_level(li, 300 + t)
+				if r[0]:
+					wins += 1
+					strokes.append(r[1])
+					times.append(r[3])
+			strokes.sort()
+			times.sort()
+			var ms: int = strokes[strokes.size() / 2] if strokes.size() else -1
+			var mt: float = times[times.size() / 2] if times.size() else -1.0
+			print("STAT %s %-20s win %2d/%d  median strokes %3d  median sim time %5.1fs" % [g.levels[li].id, g.levels[li].name, wins, n, ms, mt])
+		quit()
+		return
 	if args.size() >= 1:
 		# stats mode: -- <level index> <tries>
 		var li := int(args[0])

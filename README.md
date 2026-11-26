@@ -6,14 +6,16 @@ A Cute vs. Scary territory puzzle game for tweens (creepy and menacing, no gore)
 
 **30 nights in 6 worlds**, each teaching something new:
 
-| World | New mechanics |
-| --- | --- |
-| 1 · Moonrise | Claiming, the goal band, trapping |
-| 2 · Boom Night | Bombs, moonstone, moon charms (freeze) |
-| 3 · Creeping Dark | Gloom grubs and sugar slugs (carvers), thorn seeds, bat roosts |
-| 4 · Blood Moon | Wisps (cross any border), hunters (chase your line), the Night Mother |
-| 5 · Hallowed Ground | Must-hold regions; shrines that bless or curse while their color holds them (wall speed, creature speed, line curl); line curl from straight to free |
-| 6 · The Hunt | Must-destroy targets: idols (claim the ground under them) and crowned creatures (trap them) |
+| World | Theme | Teaches |
+| --- | --- | --- |
+| 1 · Moonrise | Learn the claim | Claiming, the goal band, small finishing claims, trapping |
+| 2 · Moonstone | Tools that help | Bombs, moonstone, moon charms, must-hold regions |
+| 3 · Creeping Dark | Threats that grow | Thorn seeds, roosts, gloom grubs and sugar slugs |
+| 4 · Hallowed Ground | Rules that change | Shrines (bless/curse), line curl: straight, arcs, curly |
+| 5 · Blood Moon | Hunters of the night | Idols, crowned creatures, wisps, hunters, the Night Mother |
+| 6 · The Hunt | Mastery | Remixes of everything, ending with The Last Idol |
+
+Each world goes introduce, develop, twist, combine, finale. Difficulty is tuned with the bot's measured win rate: about 97% in World 1 down to about 55% in World 6, with world finales the hardest night of each world.
 
 A color can never be wiped out: if a claim would take a color's last ground, its biggest pocket survives as a foothold.
 
