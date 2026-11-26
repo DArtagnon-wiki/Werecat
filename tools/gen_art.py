@@ -926,3 +926,6 @@ if __name__ == "__main__":
     idols()
     crown()
     print("ok", len(LAYERS) + len(ARM_PIVOTS) + 6, "sprites")
+    # visible-rect crops for the big layers (GPU fill-rate saver)
+    import runpy
+    runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gen_crops.py"), run_name="__main__")

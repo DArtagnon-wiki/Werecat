@@ -15,6 +15,8 @@ var enabled := true
 var morph := 0.0
 var music_level := 1.0   # ducked during menus/results
 var focused := true
+var single := false          # Lite: decode only the louder loop (saves CPU)
+var _active_scary := false
 var _js_visibility_cb   # keeps the JS callback alive
 
 
@@ -66,8 +68,29 @@ func set_focus(f: bool) -> void:
 
 func _update_paused() -> void:
 	if music_cute:
-		music_cute.stream_paused = not (enabled and focused)
-		music_scary.stream_paused = not (enabled and focused)
+		var run := enabled and focused
+		if single:
+			music_cute.stream_paused = not run or _active_scary
+			music_scary.stream_paused = not run or not _active_scary
+		else:
+			music_cute.stream_paused = not run
+			music_scary.stream_paused = not run
+
+
+func set_single(on: bool) -> void:
+	if on == single:
+		return
+	single = on
+	if not music_cute:
+		return
+	if on:
+		_active_scary = morph > 0.5
+	else:
+		# bring the paused loop back in step before both play again
+		var a := (music_scary if _active_scary else music_cute).get_playback_position()
+		(music_cute if _active_scary else music_scary).seek(a)
+	_update_paused()
+	_apply_volumes()
 
 
 func _music(path: String) -> AudioStreamPlayer:
@@ -110,6 +133,18 @@ func _apply() -> void:
 func _apply_volumes() -> void:
 	if not music_cute:
 		return
+	if single:
+		# one loop at a time; switch (in step) when the morph crosses over
+		var want := morph > (0.45 if _active_scary else 0.55)
+		if want != _active_scary:
+			var pos := (music_scary if _active_scary else music_cute).get_playback_position()
+			_active_scary = want
+			(music_scary if want else music_cute).seek(pos)
+			_update_paused()
+		var on_db := linear_to_db(maxf(music_level, 0.0001)) - 3.0
+		music_cute.volume_db = -80.0 if _active_scary else on_db
+		music_scary.volume_db = on_db if _active_scary else -80.0
+		return
 	# equal-power crossfade
 	var c := cos(morph * PI / 2.0) * music_level
 	var s := sin(morph * PI / 2.0) * music_level
@@ -123,7 +158,7 @@ var _sync_t := 0.0
 func _process(delta: float) -> void:
 	# keep the two loops locked together, checked rarely and only for big drift
 	_sync_t += delta
-	if _sync_t < 3.0 or not enabled or not music_cute.playing:
+	if _sync_t < 3.0 or single or not enabled or not music_cute.playing:
 		return
 	_sync_t = 0.0
 	var a := music_cute.get_playback_position()

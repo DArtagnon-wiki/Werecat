@@ -87,7 +87,7 @@ func _init() -> void:
 		var segs: Array = []
 		for n in ["arm_coxa", "arm_femur", "arm_tibia"]:
 			var s := Sprite2D.new()
-			s.texture = load(SP + n + ".png")
+			s.texture = SpriteCrops.cropped(n, load(SP + n + ".png"))
 			s.centered = false
 			s.offset = -ARM[n][0]
 			root.add_child(s)
@@ -99,7 +99,7 @@ func _init() -> void:
 
 func _layer(n: String, parent: Node) -> Sprite2D:
 	var s := Sprite2D.new()
-	s.texture = load(SP + n + ".png")
+	s.texture = SpriteCrops.cropped(n, load(SP + n + ".png"))
 	s.centered = false
 	parent.add_child(s)
 	L[n] = s
@@ -157,6 +157,11 @@ func _process(delta: float) -> void:
 	L.wc_head_cute.modulate.a = 1.0 - fur
 	L.wc_body_scary.modulate.a = fur
 	L.wc_head_scary.modulate.a = fur
+	# fully faded layers still cost GPU time unless hidden
+	L.wc_body_cute.visible = fur < 0.999
+	L.wc_head_cute.visible = fur < 0.999
+	L.wc_body_scary.visible = fur > 0.001
+	L.wc_head_scary.visible = fur > 0.001
 
 	spike_s = move_toward(spike_s, SPIKE_SCALE[tier], delta * 1.5)
 	horn_s = move_toward(horn_s, HORN_SCALE[tier], delta * 1.2)

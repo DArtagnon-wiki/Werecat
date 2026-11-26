@@ -387,6 +387,43 @@ func run() -> void:
 	check(lv_ok, "all %d levels load, spawn everything, don't start solved, and simulate cleanly" % g.levels.size())
 	check(g.levels.size() == 30, "there are 30 levels")
 
+	# ---------------------------------------------------------------- graphics tiers + perf paths
+	setup()
+	draw([Vector2(320, 100), Vector2(320, 560), Vector2(560, 560), Vector2(560, 100)])
+	grow_out()
+	var fresh := PackedByteArray(g.tex_bytes)
+	g._rebuild_tex_bytes()
+	check(fresh == g.tex_bytes, "incrementally kept mask bytes match a full rebuild after a claim")
+	var tex_before = g.field_mat.get_shader_parameter("mask_tex")
+	g._apply_gfx(2)
+	check(g.field_mat.shader.resource_path.ends_with("territory_lite.gdshader"), "Lite swaps in the lite territory shader")
+	check(g.field_mat.get_shader_parameter("mask_tex") == tex_before, "shader swap keeps the mask texture")
+	check(g.field_mat.get_shader_parameter("noise_tex") != null and g.field_mat.get_shader_parameter("wide_tex") != null,
+		"Lite gets its noise and wide-blur textures")
+	var big := DisplayServer.window_get_size().x > 760
+	check(g.get_tree().root.content_scale_mode == (Window.CONTENT_SCALE_MODE_VIEWPORT if big else Window.CONTENT_SCALE_MODE_CANVAS_ITEMS),
+		"Lite renders at design resolution on big screens, native on small ones")
+	check(g.audio.single and g.particle_mult < 1.0, "Lite plays one music loop and fewer particles")
+	var b0: float = g.scary_percent()
+	draw([Vector2(80, 100), Vector2(80, 560), Vector2(200, 560), Vector2(200, 100)])
+	grow_out()
+	check(absf(g.scary_percent() - b0) > 3.0, "claims still work in Lite (%.1f%% -> %.1f%%)" % [b0, g.scary_percent()])
+	g._apply_gfx(1)
+	check(g.field_mat.shader.resource_path.ends_with("territory.gdshader") and not g.audio.single, "Medium uses the full shaders")
+	g._apply_gfx(0)
+	check(g.get_tree().root.content_scale_mode == Window.CONTENT_SCALE_MODE_CANVAS_ITEMS, "High renders at native resolution")
+	# auto: a slow stretch steps the tier down
+	g.gfx_setting = "auto"
+	g.gfx_forced = ""
+	g.auto_settle = 0.0
+	var saved_tier: int = g.gfx_auto_tier
+	for i in 60:
+		g._gfx_tick(0.1)       # 10 fps for 6 s
+	check(g.gfx_tier == 2, "Auto drops a 10 fps device straight to Lite")
+	g._apply_gfx(0)
+	g.gfx_auto_tier = saved_tier
+	g._save()
+
 	# ---------------------------------------------------------------- save
 	g.stars.fill(0)
 	g.stars[0] = 3

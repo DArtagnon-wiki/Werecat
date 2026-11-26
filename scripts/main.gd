@@ -71,6 +71,7 @@ var mask := PackedByteArray()
 var under := PackedByteArray()
 var trail := PackedByteArray()
 var trail_list := PackedInt32Array()
+var tex_bytes := PackedByteArray()   # RG8 mask texture data, kept in sync by _set_cell
 var scary_count := 0
 var claimable := 1
 var bouncers: Array = []
@@ -134,6 +135,47 @@ var live_list := PackedInt32Array()
 var stars: Array = []
 var best_endless := 0.0
 var sound_on := true
+
+# graphics quality. Tiers: 0 High (native resolution), 1 Medium (720-wide
+# render, upscaled), 2 Lite (Medium + cheap shaders, fewer particles, one
+# music stream). Setting "auto" starts at the last auto tier and steps down
+# while the frame rate stays low.
+const GFX_SETTINGS := ["auto", "high", "medium", "lite"]
+const GFX_NAMES := ["High", "Medium", "Lite"]
+const AUTO_WINDOW := 3.0         # seconds of frames per auto check
+const AUTO_MIN_FPS := 40.0
+const AUTO_SETTLE := 2.0         # ignore frames right after start / a switch
+const DEBUG_OVERLAY := true      # debug release: perf readout on by default
+var gfx_setting := "auto"
+var gfx_auto_tier := 0
+var gfx_tier := -1
+var gfx_forced := ""             # ?gfx=... in the URL (not saved)
+var particle_mult := 1.0
+var shader_full := {}
+var shader_lite := {}
+var noise_tex: Texture2D
+var wide_tex: ImageTexture
+var btn_gfx_title: Button
+var btn_gfx_pause: Button
+var auto_t := 0.0
+var auto_frames := 0
+var auto_settle := AUTO_SETTLE
+var auto_log: Array = []
+var app_t := 0.0
+# perf probes (ms, last measured)
+var perf := {"game": 0.0, "mask": 0.0, "zones": 0.0, "fill": 0.0, "fill_worst": 0.0}
+var perf_frames := PackedFloat32Array()
+var perf_layer: CanvasLayer
+var perf_panel: PanelContainer
+var perf_label: Label
+var perf_collapsed := true     # one-line pill; tap for details
+var perf_hidden := false
+var perf_t := 0.0
+var perf_log_t := 0.0
+var gpu_name := ""
+var device_info := ""
+var mask_serial := 0
+var zones_serial := -1
 
 # nodes
 var world: Node2D
@@ -208,6 +250,8 @@ func _ready() -> void:
 	_build_scene()
 	_load_layout(levels[0])
 	get_viewport().size_changed.connect(_layout)
+	_init_gfx()
+	_build_perf_overlay()
 	_layout()
 	_show("title")
 
@@ -215,6 +259,8 @@ func _ready() -> void:
 ## Centers the 720x1280 design on any screen shape. The night sky stretches
 ## to fill the extra room; everything else stays centered.
 func _layout() -> void:
+	if gfx_tier >= 0:
+		_apply_render_scale()
 	var vis := get_viewport().get_visible_rect().size
 	stage_off = Vector2(maxf(0.0, (vis.x - 720.0) / 2.0), maxf(0.0, (vis.y - 1280.0) / 2.0))
 	for l in layers:
@@ -244,6 +290,258 @@ func _on_focus_changed(has_focus: bool) -> void:
 		_pause()
 
 
+# ================================================================ graphics quality
+
+func _init_gfx() -> void:
+	noise_tex = load("res://assets/textures/noise.png")
+	shader_full = {"field": field_mat.shader, "bg": (bg.material as ShaderMaterial).shader}
+	shader_lite = {"field": load("res://shaders/territory_lite.gdshader"),
+		"bg": load("res://shaders/background_lite.gdshader")}
+	wide_tex = ImageTexture.create_from_image(Image.create(GW / 2, GH / 2, false, Image.FORMAT_RG8))
+	gpu_name = "%s · %s" % [RenderingServer.get_video_adapter_vendor(), RenderingServer.get_video_adapter_name()]
+	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
+	var show_overlay := DEBUG_OVERLAY
+	if OS.has_feature("web"):
+		var q := str(JavaScriptBridge.eval("location.search", true))
+		for part in q.trim_prefix("?").split("&", false):
+			var kv := part.split("=")
+			if kv[0] == "gfx" and kv.size() > 1 and kv[1] in GFX_SETTINGS:
+				gfx_forced = kv[1]
+			elif kv[0] == "debug":
+				show_overlay = kv.size() < 2 or kv[1] != "0"
+				perf_collapsed = kv.size() > 1 and kv[1] == "0"   # ?debug or ?debug=1: start expanded
+			elif kv[0] == "play" and kv.size() > 1 and kv[1].is_valid_int():
+				# diagnostics: ?play=25 jumps straight into night 25 (1-based)
+				var li := clampi(int(kv[1]) - 1, 0, levels.size() - 1)
+				(func() -> void:
+					level_idx = li
+					level = levels[li]
+					begin_play()).call_deferred()
+			elif kv[0] == "hide" and kv.size() > 1:
+				# diagnostics: ?hide=bg,field,cat,ui,fx hides layers to find GPU cost
+				for h in kv[1].split(",", false):
+					match h:
+						"bg": bg.visible = false
+						"field": field.visible = false
+						"cat":
+							werecat.visible = false
+							werecat.front.visible = false
+						"ui":
+							for l in layers:
+								l.visible = false
+							hud.visible = false
+						"fx":
+							fx_layer.visible = false
+							fx_back.visible = false
+		device_info = str(JavaScriptBridge.eval(
+			"'dpr ' + (window.devicePixelRatio || 1).toFixed(2) + ' · ' + (navigator.hardwareConcurrency || '?')"
+			+ " + ' cores · ' + (navigator.deviceMemory ? navigator.deviceMemory + ' GB' : '? GB')", true))
+	perf_hidden = not show_overlay
+	_apply_gfx(_wanted_tier())
+
+
+func _gfx_choice() -> String:
+	return gfx_forced if gfx_forced != "" else gfx_setting
+
+
+func _wanted_tier() -> int:
+	match _gfx_choice():
+		"high":
+			return 0
+		"medium":
+			return 1
+		"lite":
+			return 2
+	return gfx_auto_tier
+
+
+## Swaps a material's shader, carrying over every uniform value it had.
+func _swap_shader(mat: ShaderMaterial, sh: Shader) -> void:
+	if mat.shader == sh:
+		return
+	var vals := {}
+	for u in mat.shader.get_shader_uniform_list():
+		var v = mat.get_shader_parameter(u.name)
+		if v != null:
+			vals[u.name] = v
+	mat.shader = sh
+	for k in vals:
+		mat.set_shader_parameter(k, vals[k])
+
+
+func _apply_gfx(tier: int) -> void:
+	if tier == gfx_tier:
+		return
+	gfx_tier = tier
+	_apply_render_scale()
+	var lite := tier == 2
+	var bm: ShaderMaterial = bg.material
+	_swap_shader(field_mat, shader_lite.field if lite else shader_full.field)
+	_swap_shader(bm, shader_lite.bg if lite else shader_full.bg)
+	if lite:
+		field_mat.set_shader_parameter("noise_tex", noise_tex)
+		field_mat.set_shader_parameter("wide_tex", wide_tex)
+		bm.set_shader_parameter("noise_tex", noise_tex)
+		var ft := flip_t
+		_upload_mask(false)      # fills the wide-blur texture
+		flip_t = ft
+		field_mat.set_shader_parameter("flip_progress", flip_t)
+	particle_mult = 0.4 if lite else 1.0
+	audio.set_single(lite)
+	auto_settle = AUTO_SETTLE
+	auto_t = 0.0
+	auto_frames = 0
+	_layout()
+	_refresh_gfx_buttons()
+	print("[gfx] tier=%s choice=%s" % [GFX_NAMES[tier], _gfx_choice()])
+
+
+## High draws at the screen's native resolution. Medium and Lite draw at the
+## 720-wide design resolution and upscale, but only when the screen is
+## bigger than that (never upscale a small screen's rendering).
+func _apply_render_scale() -> void:
+	var root := get_tree().root
+	var native := DisplayServer.window_get_size()
+	var reduce := gfx_tier > 0 and native.x > 760
+	var want := Window.CONTENT_SCALE_MODE_VIEWPORT if reduce else Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+	if root.content_scale_mode != want:
+		root.content_scale_mode = want
+
+
+## Auto mode: step down while the frame rate stays under AUTO_MIN_FPS.
+func _gfx_tick(delta: float) -> void:
+	app_t += delta
+	if _gfx_choice() != "auto" or gfx_tier >= 2:
+		return
+	if not audio.focused or delta > 0.5:
+		auto_t = 0.0
+		auto_frames = 0
+		return
+	if auto_settle > 0.0:
+		auto_settle -= delta
+		return
+	auto_t += delta
+	auto_frames += 1
+	if auto_t < AUTO_WINDOW:
+		return
+	var fps := auto_frames / auto_t
+	auto_t = 0.0
+	auto_frames = 0
+	if fps >= AUTO_MIN_FPS:
+		return
+	# very slow: skip straight to Lite
+	var nt := 2 if fps < AUTO_MIN_FPS * 0.55 else gfx_tier + 1
+	auto_log.append("%s -> %s at %ds (%.0f fps)" % [GFX_NAMES[gfx_tier], GFX_NAMES[nt], int(app_t), fps])
+	print("[gfx] auto " + auto_log[-1])
+	gfx_auto_tier = nt
+	_save()
+	_apply_gfx(nt)
+
+
+func _cycle_gfx() -> void:
+	audio.play("click", -4.0)
+	var i := GFX_SETTINGS.find(gfx_setting)
+	gfx_setting = GFX_SETTINGS[(i + 1) % GFX_SETTINGS.size()]
+	gfx_forced = ""
+	if gfx_setting == "auto":
+		gfx_auto_tier = 0        # re-detect from the top
+		auto_log.append("Auto restarted at %ds" % int(app_t))
+	_save()
+	_apply_gfx(_wanted_tier())
+	_refresh_gfx_buttons()
+
+
+func _refresh_gfx_buttons() -> void:
+	var names := {"auto": "Auto", "high": "High", "medium": "Medium", "lite": "Lite"}
+	for b in [btn_gfx_title, btn_gfx_pause]:
+		if b:
+			b.text = "Graphics: " + names[_gfx_choice()]
+
+
+# ================================================================ perf overlay
+
+func _build_perf_overlay() -> void:
+	perf_layer = CanvasLayer.new()
+	perf_layer.layer = 100
+	add_child(perf_layer)
+	perf_panel = PanelContainer.new()
+	var st := StyleBoxFlat.new()
+	st.bg_color = Color(0, 0, 0, 0.62)
+	st.set_corner_radius_all(10)
+	st.set_content_margin_all(8)
+	perf_panel.add_theme_stylebox_override("panel", st)
+	perf_panel.position = Vector2(8, 8)
+	perf_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	perf_panel.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and ev.pressed:
+			perf_collapsed = not perf_collapsed
+			perf_t = 1.0)
+	perf_panel.visible = not perf_hidden
+	perf_layer.add_child(perf_panel)
+	perf_label = Label.new()
+	perf_label.add_theme_font_override("font", font_ui)
+	perf_label.add_theme_font_size_override("font_size", 17)
+	perf_label.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
+	perf_panel.add_child(perf_label)
+	perf_t = 1.0
+
+
+func _perf_tick(delta: float) -> void:
+	perf_frames.append(delta * 1000.0)
+	if perf_frames.size() > 90:
+		perf_frames.remove_at(0)
+	perf_t += delta
+	perf_log_t += delta
+	if perf_t < 0.25 or not perf_panel:
+		return
+	perf_t = 0.0
+	var avg := 0.0
+	var worst := 0.0
+	for f in perf_frames:
+		avg += f
+		worst = maxf(worst, f)
+	avg /= maxf(1.0, perf_frames.size())
+	var fps := 1000.0 / maxf(avg, 0.001)
+	var vp := get_viewport().get_viewport_rid()
+	var r_cpu := RenderingServer.viewport_get_measured_render_time_cpu(vp) + RenderingServer.get_frame_setup_time_cpu()
+	var r_gpu := RenderingServer.viewport_get_measured_render_time_gpu(vp)
+	var proc := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
+	var wait := maxf(0.0, avg - proc - r_cpu)
+	var screen := DisplayServer.window_get_size()
+	var render: Vector2 = Vector2(screen)
+	if get_tree().root.content_scale_mode == Window.CONTENT_SCALE_MODE_VIEWPORT:
+		render = get_viewport().get_visible_rect().size
+	if perf_log_t >= 5.0:
+		perf_log_t = 0.0
+		print("[perf] fps=%.1f avg=%.1fms worst=%.0fms tier=%s game=%.2f mask=%.2f zones=%.2f fill=%.1f proc=%.2f render_cpu=%.2f wait=%.1f" % [
+			fps, avg, worst, GFX_NAMES[gfx_tier], perf.game, perf.mask, perf.zones, perf.fill, proc, r_cpu, wait])
+	if perf_hidden:
+		return
+	var vis_w := get_viewport().get_visible_rect().size.x
+	if perf_collapsed:
+		perf_label.text = "%.0f fps · %.0f ms · %s%s · tap" % [fps, avg, GFX_NAMES[gfx_tier], " (auto)" if _gfx_choice() == "auto" else ""]
+		perf_panel.reset_size()
+		perf_panel.position = Vector2((vis_w - perf_panel.size.x) / 2.0, 4)
+		return
+	var lines := PackedStringArray()
+	lines.append("%.0f fps · avg %.1f ms · worst %.0f ms" % [fps, avg, worst])
+	lines.append("script %.1f ms (game %.1f, mask %.1f, zones %.1f)" % [proc, perf.game, perf.mask, perf.zones])
+	lines.append("draw cpu %.1f ms · gpu %s · wait %.1f ms" % [r_cpu, ("%.1f ms" % r_gpu) if r_gpu > 0.0 else "n/a", wait])
+	if wait > avg * 0.5:
+		lines.append("> mostly waiting on the GPU")
+	lines.append("claim fill: last %.0f ms · worst %.0f ms" % [perf.fill, perf.fill_worst])
+	lines.append("gfx %s (%s) · %dx%d of %dx%d" % [GFX_NAMES[gfx_tier], _gfx_choice(), int(render.x), int(render.y), screen.x, screen.y])
+	lines.append(gpu_name)
+	if device_info != "":
+		lines.append(device_info)
+	for e in auto_log.slice(-2):
+		lines.append("auto: " + e)
+	lines.append("tap to shrink")
+	perf_label.text = "\n".join(lines)
+	perf_panel.reset_size()
+	perf_panel.position = Vector2((vis_w - perf_panel.size.x) / 2.0, 4)
+
+
 func _font(path: String, weight: int) -> FontVariation:
 	var fv := FontVariation.new()
 	fv.base_font = load(path)
@@ -262,6 +560,10 @@ func _load_save() -> void:
 		stars[i] = int(cf.get_value("stars", levels[i].id, 0))
 	best_endless = float(cf.get_value("endless", "best", 0.0))
 	sound_on = bool(cf.get_value("settings", "sound", true))
+	gfx_setting = str(cf.get_value("settings", "gfx", "auto"))
+	if not gfx_setting in GFX_SETTINGS:
+		gfx_setting = "auto"
+	gfx_auto_tier = clampi(int(cf.get_value("settings", "gfx_auto", 0)), 0, 2)
 
 
 func _save() -> void:
@@ -270,6 +572,8 @@ func _save() -> void:
 		cf.set_value("stars", levels[i].id, stars[i])
 	cf.set_value("endless", "best", best_endless)
 	cf.set_value("settings", "sound", sound_on)
+	cf.set_value("settings", "gfx", gfx_setting)
+	cf.set_value("settings", "gfx_auto", gfx_auto_tier)
 	cf.save(SAVE_PATH)
 
 
@@ -631,8 +935,11 @@ func _build_title() -> void:
 	b2.position = Vector2(160, 885)
 	c.add_child(b2)
 	btn_sound_title = _button("", _toggle_sound, false, 260, 64, 26)
-	btn_sound_title.position = Vector2(230, 1010)
+	btn_sound_title.position = Vector2(90, 1010)
 	c.add_child(btn_sound_title)
+	btn_gfx_title = _button("", _cycle_gfx, false, 260, 64, 26)
+	btn_gfx_title.position = Vector2(370, 1010)
+	c.add_child(btn_gfx_title)
 	_refresh_sound_buttons()
 
 
@@ -800,9 +1107,12 @@ func _build_pause() -> void:
 		b.position = Vector2(180, y)
 		c.add_child(b)
 		y += 104.0
-	btn_sound_pause = _button("", _toggle_sound, false, 260, 64, 26)
-	btn_sound_pause.position = Vector2(230, y + 6)
+	btn_sound_pause = _button("", _toggle_sound, false, 232, 64, 24)
+	btn_sound_pause.position = Vector2(124, y + 6)
 	c.add_child(btn_sound_pause)
+	btn_gfx_pause = _button("", _cycle_gfx, false, 232, 64, 24)
+	btn_gfx_pause.position = Vector2(364, y + 6)
+	c.add_child(btn_gfx_pause)
 	_refresh_sound_buttons()
 
 
@@ -1066,6 +1376,7 @@ func _load_layout(lv: Dictionary) -> void:
 	hold = 0.0
 	clock = 0.0
 	freeze_t = 0.0
+	_rebuild_tex_bytes()
 	_upload_mask(false)
 
 
@@ -1102,8 +1413,10 @@ func _set_cell(i: int, v: int) -> bool:
 	if old == v or old == STONE:
 		return false
 	mask[i] = v
+	tex_bytes[i * 2] = v * 255
 	scary_count += v - old
 	mask_dirty = true
+	mask_serial += 1
 	return true
 
 
@@ -1139,25 +1452,40 @@ func _disc_cells(center: Vector2, r_cells: float) -> PackedInt32Array:
 	return out
 
 
-func _upload_mask(animate: bool, origin := Vector2(0.5, 0.5)) -> void:
-	if animate:
-		prev_tex.update(mask_img)
-	var bytes := PackedByteArray()
-	bytes.resize(GW * GH * 2)
+## Rebuilds the texture bytes from the mask (after a layout load). After
+## that, _set_cell keeps them current so uploads need no per-cell loop.
+func _rebuild_tex_bytes() -> void:
+	tex_bytes.resize(GW * GH * 2)
 	for i in GW * GH:
 		var v := mask[i]
 		if v == STONE:
-			bytes[i * 2] = under[i] * 255
-			bytes[i * 2 + 1] = 255
+			tex_bytes[i * 2] = under[i] * 255
+			tex_bytes[i * 2 + 1] = 255
 		else:
-			bytes[i * 2] = v * 255
-			bytes[i * 2 + 1] = 0
-	var img := Image.create_from_data(GW, GH, false, Image.FORMAT_RG8, bytes)
+			tex_bytes[i * 2] = v * 255
+			tex_bytes[i * 2 + 1] = 0
+	mask_serial += 1
+
+
+func _upload_mask(animate: bool, origin := Vector2(0.5, 0.5)) -> void:
+	if tex_bytes.size() != GW * GH * 2:
+		return
+	var t0 := Time.get_ticks_usec()
+	if animate:
+		prev_tex.update(mask_img)
+	var img := Image.create_from_data(GW, GH, false, Image.FORMAT_RG8, tex_bytes)
 	img.resize(GW / 2, GH / 2, Image.INTERPOLATE_BILINEAR)
+	if gfx_tier == 2:
+		# Lite: a wider blur for the seam halo (replaces 8 shader taps)
+		var w := img.duplicate() as Image
+		w.resize(GW / 7, GH / 7, Image.INTERPOLATE_BILINEAR)
+		w.resize(GW / 2, GH / 2, Image.INTERPOLATE_CUBIC)
+		wide_tex.update(w)
 	img.resize(GW, GH, Image.INTERPOLATE_CUBIC)
 	mask_img = img
 	mask_tex.update(mask_img)
 	mask_dirty = false
+	perf.mask = (Time.get_ticks_usec() - t0) / 1000.0
 	if animate:
 		flip_t = 0.0
 		field_mat.set_shader_parameter("flip_origin", origin)
@@ -1174,6 +1502,8 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventScreenTouch:
 		if event.pressed:
+			if perf_panel and perf_panel.visible and perf_panel.get_global_rect().has_point(event.position):
+				return
 			var ep: Vector2 = event.position - stage_off
 			if ep.distance_to(Vector2(360, 236)) < 110.0:
 				audio.play("click", -4.0)
@@ -1556,6 +1886,14 @@ func _check_deaths() -> void:
 ## `color`, tiny ones trap their bouncers and flip. Pockets elsewhere are
 ## left alone even if empty. Returns cells flipped.
 func _flip_empty_pockets(color: int, seeds: PackedInt32Array) -> int:
+	var t0 := Time.get_ticks_usec()
+	var n := _flip_pockets_core(color, seeds)
+	perf.fill = (Time.get_ticks_usec() - t0) / 1000.0
+	perf.fill_worst = maxf(perf.fill_worst, perf.fill)
+	return n
+
+
+func _flip_pockets_core(color: int, seeds: PackedInt32Array) -> int:
 	var invaded := 1 - color
 	var seen := PackedByteArray()
 	seen.resize(GW * GH)
@@ -1618,10 +1956,7 @@ func _flip_empty_pockets(color: int, seeds: PackedInt32Array) -> int:
 	# A color can never be wiped out: if these flips would take all of the
 	# invaded color's ground, its largest pocket survives as a foothold (any
 	# creatures in it can still be trapped).
-	var remaining := 0
-	for i in GW * GH:
-		if mask[i] == invaded:
-			remaining += 1
+	var remaining := scary_count if invaded == SCARY else claimable - scary_count
 	var total_flip := 0
 	for pk in to_flip:
 		total_flip += pk.cells.size()
@@ -1914,6 +2249,7 @@ func _use_charm(it: Dictionary) -> void:
 # ================================================================ simulation
 
 func _process(delta: float) -> void:
+	var t_frame := Time.get_ticks_usec()
 	clock += delta if state == "play" else 0.0
 	if flip_t < 1.0:
 		flip_t = minf(1.0, flip_t + delta * 1.8)
@@ -1934,7 +2270,10 @@ func _process(delta: float) -> void:
 	elif state == "levels":
 		werecat.set_target(0.0)
 	elif state == "play":
-		_update_zones()
+		if zones_serial != mask_serial and not zones.is_empty():
+			var tz := Time.get_ticks_usec()
+			_update_zones()
+			perf.zones = (Time.get_ticks_usec() - tz) / 1000.0
 		freeze_t = maxf(0.0, freeze_t - delta)
 		step_growth(delta)
 		if state == "play":
@@ -1956,6 +2295,9 @@ func _process(delta: float) -> void:
 	_update_hud()
 	frame.queue_redraw()
 	meter.queue_redraw()
+	perf.game = (Time.get_ticks_usec() - t_frame) / 1000.0
+	_gfx_tick(delta)
+	_perf_tick(delta)
 
 
 func step_entities(delta: float) -> void:
@@ -2240,6 +2582,7 @@ func _build_zones(lv: Dictionary) -> void:
 
 ## frac = share of the zone's ground in the zone's color; held at 60%.
 func _update_zones() -> void:
+	zones_serial = mask_serial
 	for z in zones:
 		var n := 0
 		for i in z.cells:
@@ -2489,7 +2832,7 @@ func _burst(field_pt: Vector2, tex: Texture2D, amount: int, tint: Color, parent:
 	var p := CPUParticles2D.new()
 	p.position = FIELD_POS + field_pt
 	p.texture = tex
-	p.amount = amount
+	p.amount = maxi(1, int(round(amount * particle_mult)))
 	p.one_shot = true
 	p.explosiveness = 0.95
 	p.lifetime = 0.9
