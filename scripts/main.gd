@@ -19,6 +19,7 @@ const CELL := 4.0
 const FIELD_POS := Vector2(40, 420)
 const FIELD_SIZE := Vector2(640, 744)
 const TRAIL_R := 2.2
+const GROW_SPEED := 380.0        # px/s for each of the two growing ends
 const BOUNCER_SPEED := 170.0
 const HOLD_TIME := 3.0
 const WC_SCALE := 0.58
@@ -77,6 +78,15 @@ var stroke_active := false
 var stroke_origin := CUTE
 var last_origin_pt := Vector2.ZERO
 var stroke_points := PackedVector2Array()
+# growth: after a path closes, the wall grows along it from both ends
+var growing := false
+var grow_pts := PackedVector2Array()
+var grow_cum := PackedFloat32Array()
+var grow_len := 0.0
+var grow_a := 0.0
+var grow_b := 0.0
+var live := PackedByteArray()          # grown (vulnerable) cells
+var live_list := PackedInt32Array()
 
 # save data
 var stars: Array = []
@@ -93,6 +103,10 @@ var field: ColorRect
 var field_mat: ShaderMaterial
 var frame: Node2D
 var trail_line: Line2D
+var grow_line_a: Line2D
+var grow_line_b: Line2D
+var front_a: Sprite2D
+var front_b: Sprite2D
 var item_layer: Node2D
 var bouncer_layer: Node2D
 var fx_layer: Node2D
@@ -140,6 +154,7 @@ func _ready() -> void:
 	mask.resize(GW * GH)
 	under.resize(GW * GH)
 	trail.resize(GW * GH)
+	live.resize(GW * GH)
 	stars.resize(levels.size())
 	stars.fill(0)
 	audio = GameAudio.new()
@@ -258,6 +273,14 @@ func _build_scene() -> void:
 
 	trail_line = _make_trail_line()
 	world.add_child(trail_line)
+	grow_line_a = _make_trail_line()
+	grow_line_b = _make_trail_line()
+	grow_line_a.material = trail_line.material
+	grow_line_b.material = trail_line.material
+	world.add_child(grow_line_a)
+	world.add_child(grow_line_b)
+	front_a = _make_front()
+	front_b = _make_front()
 
 	bouncer_layer = Node2D.new()
 	world.add_child(bouncer_layer)
@@ -290,6 +313,17 @@ func _make_trail_line() -> Line2D:
 	mat.shader = load("res://shaders/trail.gdshader")
 	l.material = mat
 	return l
+
+
+func _make_front() -> Sprite2D:
+	var f := Sprite2D.new()
+	f.texture = T.fx_sparkle
+	f.visible = false
+	var add := CanvasItemMaterial.new()
+	add.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	f.material = add
+	world.add_child(f)
+	return f
 
 
 func _rrect(node: CanvasItem, r: Rect2, rad: float, col: Color, filled := true, w := 1.0) -> void:
@@ -811,7 +845,8 @@ func start_endless() -> void:
 
 
 func _pause() -> void:
-	_cancel_stroke()
+	if stroking and not growing:
+		_cancel_stroke()
 	_show("pause")
 
 
@@ -887,6 +922,8 @@ func _end(won: bool) -> void:
 
 func _load_layout(lv: Dictionary) -> void:
 	_clear_entities()
+	if trail_line:
+		_clear_stroke()
 	var built := Levels.build(lv, GW, GH)
 	mask = built[0]
 	under = built[1]
@@ -1004,7 +1041,7 @@ func _input(event: InputEvent) -> void:
 
 
 func begin_stroke(p: Vector2) -> void:
-	if state != "play" or not in_field(p) or type_at(p) == STONE:
+	if state != "play" or growing or not in_field(p) or type_at(p) == STONE:
 		return
 	stroking = true
 	stroke_active = false
@@ -1024,8 +1061,8 @@ func move_stroke(p: Vector2) -> void:
 			stroke_active = true
 			stroke_points = PackedVector2Array([last_origin_pt])
 			trail_line.points = PackedVector2Array([last_origin_pt])
+			trail_line.modulate.a = 0.45
 			_style_trail()
-			audio.play("trail_cute" if stroke_origin == CUTE else "trail_scary", -6.0, 0.08)
 			_extend_trail(p)
 		elif inside and type_at(p) == stroke_origin:
 			last_origin_pt = p
@@ -1034,55 +1071,59 @@ func move_stroke(p: Vector2) -> void:
 	if q.distance_to(stroke_points[stroke_points.size() - 1]) < 3.0 and inside and not near_edge:
 		return
 	_extend_trail(q)
-	if not stroking:
-		return
 	var t := type_at(q)
 	if not inside or near_edge or t == stroke_origin or t == STONE:
-		close_stroke(q)
+		start_growth()
 
 
+## Lifting before the path closes just cancels the blueprint. Free.
 func end_stroke() -> void:
 	if stroking and stroke_active:
-		_fade_trail(false)
-	_clear_stroke()
+		_fade_line(trail_line, false)
+	if not growing:
+		_clear_stroke()
+	else:
+		stroking = false
 
 
 func _cancel_stroke() -> void:
-	if stroke_active:
-		_fade_trail(false)
+	if stroke_active or growing:
+		_fade_line(trail_line, false)
+		_fade_line(grow_line_a, false)
+		_fade_line(grow_line_b, false)
 	_clear_stroke()
 
 
 func _clear_stroke() -> void:
 	stroking = false
 	stroke_active = false
+	growing = false
 	stroke_points.clear()
 	for i in trail_list:
 		trail[i] = 0
 	trail_list.clear()
+	for i in live_list:
+		live[i] = 0
+	live_list.clear()
 	if trail_line:
 		trail_line.clear_points()
+		grow_line_a.clear_points()
+		grow_line_b.clear_points()
+		front_a.visible = false
+		front_b.visible = false
 
 
+## Drawing only lays down a blueprint (no risk, no triggers).
 func _extend_trail(p: Vector2) -> void:
 	var a := stroke_points[stroke_points.size() - 1]
 	stroke_points.append(p)
 	trail_line.add_point(p)
 	var steps := maxi(1, int(a.distance_to(p) / (CELL * 0.5)))
 	for k in steps + 1:
-		_stamp(a.lerp(p, float(k) / steps))
-	# trail touches bombs and charms
-	for it in items:
-		if not it.alive or it.kind not in ["bomb", "charm"]:
-			continue
-		if Geometry2D.get_closest_point_to_segment(it.pos, a, p).distance_to(it.pos) < 26.0:
-			if it.kind == "bomb" and not it.armed:
-				_arm_bomb(it, stroke_origin)
-			elif it.kind == "charm":
-				_use_charm(it)
+		_stamp(a.lerp(p, float(k) / steps), trail, trail_list)
 
 
-func _stamp(p: Vector2) -> void:
+func _stamp(p: Vector2, arr: PackedByteArray, list: PackedInt32Array) -> void:
 	var cx := int(p.x / CELL)
 	var cy := int(p.y / CELL)
 	var r := int(ceil(TRAIL_R))
@@ -1095,9 +1136,9 @@ func _stamp(p: Vector2) -> void:
 			if x < 0 or y < 0 or x >= GW or y >= GH:
 				continue
 			var i := y * GW + x
-			if trail[i] == 0:
-				trail[i] = 1
-				trail_list.append(i)
+			if arr[i] == 0:
+				arr[i] = 1
+				list.append(i)
 
 
 func _style_trail() -> void:
@@ -1111,12 +1152,13 @@ func _style_trail() -> void:
 	mat.set_shader_parameter("danger", 0.0)
 
 
-func _fade_trail(broken: bool) -> void:
-	if trail_line.get_point_count() < 2:
+func _fade_line(src_line: Line2D, broken: bool) -> void:
+	if src_line.get_point_count() < 2:
 		return
 	var l := _make_trail_line()
-	l.points = trail_line.points
-	var src: ShaderMaterial = trail_line.material
+	l.points = src_line.points
+	l.modulate.a = src_line.modulate.a
+	var src: ShaderMaterial = src_line.material
 	var mat: ShaderMaterial = l.material
 	mat.set_shader_parameter("core_color", src.get_shader_parameter("core_color"))
 	mat.set_shader_parameter("glow_color", src.get_shader_parameter("glow_color"))
@@ -1130,31 +1172,112 @@ func _fade_trail(broken: bool) -> void:
 	tw.tween_callback(l.queue_free)
 
 
-func break_trail() -> void:
-	var at := stroke_points[stroke_points.size() - 1] if stroke_points.size() > 0 else FIELD_SIZE / 2.0
-	_fade_trail(true)
-	_clear_stroke()
-	lives -= 1
-	shake = 1.0
-	audio.play("snap", 0.0, 0.05)
-	_burst(at, T.fx_ember, 22, Color(1, 0.35, 0.15))
-	if lives <= 0:
-		_end(false)
+# ---------------------------------------------------------------- growth
+
+## The path closed: the wall now grows along it from both ends toward the
+## middle. Grown sections are live; anything touching them snaps the wall.
+func start_growth() -> void:
+	stroking = false
+	stroke_active = false
+	growing = true
+	grow_pts = stroke_points.duplicate()
+	grow_cum = PackedFloat32Array([0.0])
+	for i in range(1, grow_pts.size()):
+		grow_cum.append(grow_cum[i - 1] + grow_pts[i].distance_to(grow_pts[i - 1]))
+	grow_len = grow_cum[grow_cum.size() - 1]
+	grow_a = 0.0
+	grow_b = grow_len
+	trail_line.modulate.a = 0.3
+	var col := Color(1, 0.8, 0.95) if stroke_origin == CUTE else Color(1, 0.45, 0.15)
+	for f in [front_a, front_b]:
+		f.visible = true
+		f.modulate = col
+	audio.play("trail_cute" if stroke_origin == CUTE else "trail_scary", -4.0, 0.08)
+	_update_growth_visuals()
 
 
-func close_stroke(end_pt: Vector2) -> void:
-	var invaded := 1 - stroke_origin
-	for b in bouncers:
-		if _threatens(b) and _touches_trail(b.pos, b.r):
-			break_trail()
-			return
+func _point_at(d: float) -> Vector2:
+	d = clampf(d, 0.0, grow_len)
+	var lo := 0
+	var hi := grow_cum.size() - 1
+	while hi - lo > 1:
+		var mid := (lo + hi) / 2
+		if grow_cum[mid] <= d:
+			lo = mid
+		else:
+			hi = mid
+	var seg := grow_cum[hi] - grow_cum[lo]
+	var t := 0.0 if seg <= 0.0001 else (d - grow_cum[lo]) / seg
+	return grow_pts[lo].lerp(grow_pts[hi], t)
+
+
+func _sub_points(d0: float, d1: float) -> PackedVector2Array:
+	var out := PackedVector2Array([_point_at(d0)])
+	for i in grow_pts.size():
+		if grow_cum[i] > d0 and grow_cum[i] < d1:
+			out.append(grow_pts[i])
+	out.append(_point_at(d1))
+	return out
+
+
+func _grow_range(d0: float, d1: float) -> void:
+	var d := d0
+	while d <= d1:
+		var p := _point_at(d)
+		_stamp(p, live, live_list)
+		for it in items:
+			if it.alive and it.kind in ["bomb", "charm"] and it.pos.distance_to(p) < 26.0:
+				if it.kind == "bomb" and not it.armed:
+					_arm_bomb(it, stroke_origin)
+				elif it.kind == "charm":
+					_use_charm(it)
+		d += 2.0
+	_stamp(_point_at(d1), live, live_list)
+
+
+func step_growth(delta: float) -> void:
+	if not growing:
+		return
+	var adv := GROW_SPEED * delta
+	var na := grow_a + adv
+	var nb := grow_b - adv
+	if na >= nb:
+		var mid := (grow_a + grow_b) / 2.0
+		_grow_range(grow_a, mid)
+		_grow_range(mid, grow_b)
+		grow_a = mid
+		grow_b = mid
+		complete_growth(_point_at(mid))
+		return
+	_grow_range(grow_a, na)
+	_grow_range(nb, grow_b)
+	grow_a = na
+	grow_b = nb
+	_update_growth_visuals()
+
+
+func _update_growth_visuals() -> void:
+	grow_line_a.points = _sub_points(0.0, maxf(grow_a, 0.5))
+	grow_line_b.points = _sub_points(minf(grow_b, grow_len - 0.5), grow_len)
+	front_a.position = FIELD_POS + _point_at(grow_a)
+	front_b.position = FIELD_POS + _point_at(grow_b)
+	var pulse := 0.85 + 0.2 * sin(clock * 30.0)
+	front_a.scale = Vector2.ONE * pulse
+	front_b.scale = Vector2.ONE * pulse
+	front_a.rotation = clock * 4.0
+	front_b.rotation = -clock * 4.0
+
+
+## The two ends met: claim.
+func complete_growth(meet: Vector2) -> void:
 	var bomb_before := _bomb_cells()
 	for i in trail_list:
 		_set_cell(i, stroke_origin)
 	var flipped := _flip_empty_pockets(stroke_origin)
-	_upload_mask(true, end_pt / FIELD_SIZE)
-	_fade_trail(false)
-	_burst(end_pt, T.fx_sparkle if stroke_origin == CUTE else T.fx_ember, 28, Color.WHITE)
+	_upload_mask(true, meet / FIELD_SIZE)
+	_fade_line(grow_line_a, false)
+	_fade_line(grow_line_b, false)
+	_burst(meet, T.fx_sparkle if stroke_origin == CUTE else T.fx_ember, 28, Color.WHITE)
 	audio.play("claim_cute" if stroke_origin == CUTE else "claim_scary", -1.0, 0.04)
 	if stroke_origin == SCARY:
 		werecat.strike()
@@ -1164,6 +1287,21 @@ func close_stroke(end_pt: Vector2) -> void:
 	werecat.set_target(scary_percent() / 100.0)
 	if flipped > 0 and mode == "endless":
 		score += flipped * 0.02
+
+
+func break_trail(at: Vector2 = Vector2(-1, -1)) -> void:
+	if at.x < 0.0:
+		at = _point_at(grow_a) if growing else FIELD_SIZE / 2.0
+	_fade_line(grow_line_a, true)
+	_fade_line(grow_line_b, true)
+	_fade_line(trail_line, true)
+	_clear_stroke()
+	lives -= 1
+	shake = 1.0
+	audio.play("snap", 0.0, 0.05)
+	_burst(at, T.fx_ember, 22, Color(1, 0.35, 0.15))
+	if lives <= 0:
+		_end(false)
 
 
 func _bomb_cells() -> Dictionary:
@@ -1243,7 +1381,7 @@ func _flip_empty_pockets(color: int) -> int:
 
 
 func _threatens(b: Dictionary) -> bool:
-	if not stroke_active:
+	if not growing:
 		return false
 	match b.kind:
 		"wisp", "carver":
@@ -1261,7 +1399,7 @@ func _touches_trail(p: Vector2, radius: float) -> bool:
 			var y := cy + dy
 			if x < 0 or y < 0 or x >= GW or y >= GH:
 				continue
-			if trail[y * GW + x] == 1 and Vector2(dx, dy).length() * CELL <= radius + CELL:
+			if live[y * GW + x] == 1 and Vector2(dx, dy).length() * CELL <= radius + CELL:
 				return true
 	return false
 
@@ -1521,7 +1659,9 @@ func _process(delta: float) -> void:
 		werecat.set_target(0.0)
 	elif state == "play":
 		freeze_t = maxf(0.0, freeze_t - delta)
-		step_entities(delta)
+		step_growth(delta)
+		if state == "play":
+			step_entities(delta)
 		if state == "play":
 			step_items(delta)
 		if state == "play":
@@ -1545,7 +1685,7 @@ func step_entities(delta: float) -> void:
 		# frozen bouncers still snap trails they sit on
 		for b in bouncers:
 			if _threatens(b) and _touches_trail(b.pos, b.r):
-				break_trail()
+				break_trail(b.pos)
 				return
 		return
 	for b in bouncers.duplicate():
@@ -1559,7 +1699,7 @@ func step_entities(delta: float) -> void:
 			_:
 				_move_confined(b, delta)
 		if _threatens(b) and _touches_trail(b.pos, b.r):
-			break_trail()
+			break_trail(b.pos)
 			return
 
 
@@ -1569,10 +1709,12 @@ func _move_confined(b: Dictionary, delta: float) -> void:
 	var side: int = b.side
 	if type_at(p) != side:
 		p = _unstick(p, side)
-	if b.kind in ["stalker", "boss"] and stroke_active and side != stroke_origin and stroke_points.size() > 0:
-		var head := stroke_points[stroke_points.size() - 1]
+	if b.kind in ["stalker", "boss"] and growing and side != stroke_origin:
+		var fa := _point_at(grow_a)
+		var fb := _point_at(grow_b)
+		var head := fa if fa.distance_squared_to(p) < fb.distance_squared_to(p) else fb
 		var want: Vector2 = (head - p).normalized() * b.speed * 1.15
-		v = v.lerp(want, clampf(delta * 1.6, 0.0, 1.0))
+		v = v.lerp(want, clampf(delta * 1.2, 0.0, 1.0))
 		if v.length() > 1.0:
 			v = v.normalized() * b.speed * 1.15
 	elif v.length() > b.speed * 1.01:

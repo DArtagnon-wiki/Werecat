@@ -2,7 +2,7 @@
 
 A Cute vs. Scary territory puzzle game for tweens (creepy and menacing, no gore), built with Godot 4.7.
 
-**How it plays:** the only walls are the field's border. Put your finger down in one territory and draw any shape into the other. When your line gets back to your own side, the edge or moonstone, every pocket you cut off with no bouncer inside flips to your color. Squeeze a bouncer into a tiny pocket and it's trapped. If anything touches your line while it's open, the line snaps and you lose a heart. Lifting your finger early is free. Hold the meter inside the gold band for 3 seconds to win the night.
+**How it plays:** the only walls are the field's border. Put your finger down in one territory and draw any shape into the other: that's a safe blueprint. When it gets back to your own side, the edge or moonstone, the real wall grows along it from both ends. If anything touches a grown section before the ends meet, the wall snaps and you lose a heart. When they meet, every pocket you cut off with no bouncer inside flips to your color, and bouncers squeezed into tiny pockets are trapped. Lifting your finger before closing is free. Hold the meter inside the gold band for 3 seconds to win the night.
 
 **20 nights in 4 worlds**, each teaching something new:
 

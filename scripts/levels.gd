@@ -16,18 +16,18 @@ const STONE := 2
 const WORLDS := ["Moonrise", "Boom Night", "Creeping Dark", "Blood Moon"]
 
 const TIPS := {
-	"claim": ["Claim ground", "Drag from the Scary side into the Cute side and back. Everything you cut off with no puff inside turns Scary."],
+	"claim": ["Claim ground", "Drag from the Scary side into the Cute side and back. Then the wall grows from both ends. If a bouncer touches it before the ends meet, it snaps!"],
 	"band": ["Hit the gold band", "Keep the meter inside the gold band for 3 seconds. Going too far counts as missing."],
 	"trap": ["Trap them", "Squeeze a bouncer into a tiny pocket and it's captured. Its pocket flips too."],
-	"bomb": ["Bombs", "Touch a bomb with your trail. Boom: everything nearby turns your color."],
+	"bomb": ["Bombs", "Grow a wall through a bomb. Boom: everything nearby turns your color."],
 	"stone": ["Moonstone", "Stone belongs to nobody. Bouncers bounce off it, and your trail can end on it like the edge."],
-	"charm": ["Moon charms", "Touch a charm with your trail to freeze every bouncer for 4 seconds."],
+	"charm": ["Moon charms", "Grow a wall through a charm to freeze every bouncer for 4 seconds."],
 	"grub": ["Gloom grubs", "Grubs tunnel through Cute land, turning it Scary. Claim the ground under one to squash it."],
 	"slug": ["Sugar slugs", "Slugs paint sweet trails through Scary land. Claim the ground under one to stop it."],
 	"seed": ["Thorn seeds", "Seeds keep spreading their color. Claim the ground they sit on to pull them out."],
 	"nest": ["Bat roosts", "Roosts hatch a new bat every few seconds until you claim the ground under them."],
 	"wisp": ["Wisps", "Wisps drift through every territory, and they snap any trail they touch."],
-	"stalker": ["Hunters", "Hunter bats chase the tip of your trail. Draw fast, or bait them away."],
+	"stalker": ["Hunters", "Hunter bats chase the growing ends of your wall. Keep walls short, or bait them away."],
 	"boss": ["The Night Mother", "She hunts your trail and calls bats from the roosts. Trap her to break the spell."],
 }
 
@@ -94,7 +94,7 @@ static func all() -> Array:
 		 "bouncers": [_b("basic", CUTE), _b("stalker", CUTE), _b("basic", SCARY)],
 		 "items": [_i("nest", CUTE, 0.5, 0.5), _i("bomb", 0, 0.2, 0.2), _i("bomb", 0, 0.8, 0.3), _i("bomb", 0, 0.3, 0.85)], "tip": ""},
 		{"id": "4-5", "name": "Night Mother", "layout": ["island", 0.36, SCARY], "stone": ["pillars", 3], "goal": [0, 12], "par": 140,
-		 "bouncers": [_b("boss", SCARY, 1, 0.9), _b("basic", CUTE), _b("wisp", SCARY)],
+		 "bouncers": [_b("boss", SCARY, 1, 0.8), _b("basic", CUTE), _b("wisp", SCARY)],
 		 "items": [_i("nest", SCARY, 0.5, 0.36), _i("charm", 0, 0.12, 0.1), _i("charm", 0, 0.88, 0.9), _i("bomb", 0, 0.1, 0.9)], "tip": "boss"},
 	]
 

@@ -33,6 +33,9 @@ func sim(seconds: float) -> void:
 			return
 		g.clock += dt
 		g.freeze_t = maxf(0.0, g.freeze_t - dt)
+		g.step_growth(dt)
+		if g.state != "play":
+			return
 		g.step_entities(dt)
 		if g.state == "play":
 			g.step_items(dt)
@@ -93,6 +96,13 @@ func stroke(side: int, depth: float) -> void:
 	g.end_stroke()
 
 
+func finish_growth() -> void:
+	var guard := 0
+	while g.growing and g.state == "play" and guard < 300:
+		sim(1.0 / 30.0 * 2.0)
+		guard += 1
+
+
 func play_level(i: int, attempt := 0) -> Array:
 	g.rng.seed = 1000 * i + attempt   # deterministic spawns -> reproducible CI
 	g.open_intro(i)
@@ -109,6 +119,7 @@ func play_level(i: int, attempt := 0) -> Array:
 		var dist := (gmin - s) if s < gmin else (s - gmax)
 		var depth := clampf(dist * 9.0, 30.0, 700.0)
 		stroke(side, depth)
+		finish_growth()
 		strokes += 1
 		sim(0.25)
 	return [g.state == "won", strokes, g.lives, g.clock]

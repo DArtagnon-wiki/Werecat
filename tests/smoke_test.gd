@@ -48,11 +48,23 @@ func draw_more(points: Array) -> void:
 			g.move_stroke(a.lerp(b, float(k) / n))
 
 
+func grow_out() -> void:
+	## let a closed path's wall finish growing (bouncers keep moving)
+	var dt := 1.0 / 60.0
+	for i in 600:
+		if not g.growing:
+			return
+		g.clock += dt
+		g.step_growth(dt)
+		g.step_entities(dt)
+
+
 func sim(seconds: float, items := true) -> void:
 	var dt := 1.0 / 60.0
 	for i in int(seconds * 60):
 		g.clock += dt
 		g.freeze_t = maxf(0.0, g.freeze_t - dt)
+		g.step_growth(dt)
 		g.step_entities(dt)
 		if items:
 			g.step_items(dt)
@@ -80,7 +92,9 @@ func run() -> void:
 	add_b("basic", g.SCARY, Vector2(500, 600))
 	var before: float = g.scary_percent()
 	draw([Vector2(100, 200), Vector2(100, 760)])
-	check(g.scary_percent() < before - 5.0 and g.lives == 3, "line to the edge claims the bat-free side")
+	check(g.growing and absf(g.scary_percent() - before) < 0.01, "closing a path starts growth (nothing claimed yet)")
+	grow_out()
+	check(g.scary_percent() < before - 5.0 and g.lives == 3, "when the ends meet, the bat-free side is claimed")
 
 	setup()
 	before = g.scary_percent()
@@ -91,17 +105,25 @@ func run() -> void:
 
 	setup()
 	add_b("basic", g.SCARY, Vector2(300, 600))
-	draw([Vector2(300, 200), Vector2(300, 540)])
+	draw([Vector2(300, 200), Vector2(300, 640)])
 	g.step_entities(1.0 / 60.0)
-	check(g.lives == 3, "bat not yet touching the trail")
-	draw_more([Vector2(300, 540), Vector2(300, 620)])
-	g.step_entities(1.0 / 60.0)
-	check(g.lives == 2 and not g.stroke_active, "bat touching the trail snaps it")
+	check(g.lives == 3, "drawing a blueprint through a bat is safe")
+	g.end_stroke()
+	draw([Vector2(300, 200), Vector2(300, 760)])
+	grow_out()
+	check(g.lives == 2 and not g.growing, "a bat touching the growing wall snaps it")
+	setup()
+	add_b("basic", g.SCARY, Vector2(300, 600))
+	g.begin_stroke(Vector2(100, 200))
+	draw_more([Vector2(100, 200), Vector2(100, 760)])
+	g.begin_stroke(Vector2(400, 200))
+	check(not g.stroking, "you can't start a new path while a wall is growing")
 
 	setup()
 	add_b("basic", g.CUTE, Vector2(80, 80))
 	before = g.scary_percent()
 	draw([Vector2(320, 600), Vector2(320, 150), Vector2(440, 150), Vector2(440, 600)])
+	grow_out()
 	check(g.scary_percent() > before + 3.0, "closing a loop claims the enclosed pocket")
 
 	# ---------------------------------------------------------------- trapping
@@ -109,6 +131,7 @@ func run() -> void:
 	var trapped := add_b("basic", g.CUTE, Vector2(40, 325))
 	add_b("basic", g.CUTE, Vector2(450, 120))
 	draw([Vector2(92, 500), Vector2(92, 282), Vector2(-10, 282)])
+	grow_out()
 	check(not g.bouncers.has(trapped) and g.bouncers.size() == 1, "a bouncer squeezed into a tiny pocket is trapped")
 	check(g.type_at(Vector2(40, 325)) == g.SCARY, "the trapped pocket flips")
 
@@ -116,8 +139,9 @@ func run() -> void:
 	setup({"items": [{"kind": "bomb", "side": 0, "at": Vector2(300, 150) / g.FIELD_SIZE}]})
 	add_b("basic", g.CUTE, Vector2(560, 60))
 	before = g.scary_percent()
-	draw([Vector2(300, 520), Vector2(300, 160)], true)
-	check(g.items[0].armed and g.items[0].color == g.SCARY, "touching a bomb with a Scary trail arms it Scary")
+	draw([Vector2(300, 520), Vector2(300, -10)])
+	grow_out()
+	check(g.items[0].armed and g.items[0].color == g.SCARY, "a Scary wall growing through a bomb arms it Scary")
 	sim(0.6)
 	check(g.scary_percent() > before + 4.0, "bomb blast converts the area (%.1f%% -> %.1f%%)" % [before, g.scary_percent()])
 	check(g.type_at(Vector2(300, 150)) == g.SCARY, "bomb's ground is now Scary")
@@ -125,8 +149,9 @@ func run() -> void:
 	# ---------------------------------------------------------------- charms
 	setup({"items": [{"kind": "charm", "side": 0, "at": Vector2(300, 500) / g.FIELD_SIZE}]})
 	var bat := add_b("basic", g.SCARY, Vector2(500, 650), Vector2(150, 0))
-	draw([Vector2(300, 200), Vector2(300, 510)], true)
-	check(g.freeze_t > 3.0, "touching a moon charm freezes bouncers")
+	draw([Vector2(300, 200), Vector2(300, 760)])
+	grow_out()
+	check(g.freeze_t > 3.0, "a wall growing through a moon charm freezes bouncers")
 	var p0: Vector2 = bat.pos
 	g.step_entities(0.1)
 	check(bat.pos == p0, "frozen bouncers don't move")
@@ -162,7 +187,7 @@ func run() -> void:
 	var stone_pt := Vector2(-1, -1)
 	for y in range(100, 180):
 		for x in range(10, 150):
-			if g.mask[y * g.GW + x] == g.STONE:
+			if g.mask[y * g.GW + x] == g.STONE and g.mask[(y - 8) * g.GW + x] == g.SCARY:
 				stone_pt = Vector2(x * g.CELL + 2, y * g.CELL + 2)
 				break
 		if stone_pt.x >= 0:
@@ -171,7 +196,9 @@ func run() -> void:
 		for b in g.bouncers.duplicate():
 			g._capture(b)
 		draw([Vector2(stone_pt.x, 200), stone_pt])
-		check(not g.stroke_active and g.lives == 3, "a trail can end on stone")
+		check(g.growing, "a path can close on stone")
+		grow_out()
+		check(not g.growing and g.lives == 3, "and its wall completes")
 	else:
 		check(false, "found a stone cell for the stone test")
 
@@ -190,19 +217,23 @@ func run() -> void:
 	var wisp := add_b("wisp", g.SCARY, Vector2(320, 300), Vector2(0, 100))
 	sim(1.5, false)
 	check(g.type_at(wisp.pos) == g.SCARY and wisp.pos.y > 372, "wisps drift across the border")
-	draw([Vector2(100, 100), Vector2(100, 450)])
-	check(g._threatens(wisp), "wisps threaten any trail")
-	g.end_stroke()
+	wisp.pos = Vector2(600, 100)
+	draw([Vector2(100, 100), Vector2(100, 760)])
+	check(g.growing and g._threatens(wisp), "wisps threaten any growing wall")
+	g._clear_stroke()
 
 	# ---------------------------------------------------------------- stalkers
 	setup()
-	var hunter := add_b("stalker", g.SCARY, Vector2(500, 650), Vector2(-170, 0))
-	draw([Vector2(150, 200), Vector2(150, 520)])
-	for i in 30:
+	var hunter := add_b("stalker", g.SCARY, Vector2(560, 650), Vector2(170, 0))
+	draw([Vector2(150, 200), Vector2(150, 760)])
+	for i in 20:
+		g.step_growth(1.0 / 60.0)
 		g._move_confined(hunter, 1.0 / 60.0)
-	var to_head: Vector2 = (Vector2(150, 520) - hunter.pos).normalized()
-	check(hunter.vel.normalized().dot(to_head) > 0.5, "hunters steer toward the trail's tip")
-	g.end_stroke()
+	var fa: Vector2 = g._point_at(g.grow_a)
+	var fb: Vector2 = g._point_at(g.grow_b)
+	var head: Vector2 = fa if fa.distance_to(hunter.pos) < fb.distance_to(hunter.pos) else fb
+	check(hunter.vel.normalized().dot((head - hunter.pos).normalized()) > 0.5, "hunters steer toward a growing end")
+	g._clear_stroke()
 
 	# ---------------------------------------------------------------- all levels
 	var lv_ok := true
