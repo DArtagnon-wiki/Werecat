@@ -993,6 +993,20 @@ func paint_disc(center: Vector2, r_cells: float, color: int) -> int:
 	return n
 
 
+func _disc_cells(center: Vector2, r_cells: float) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var cx := int(center.x / CELL)
+	var cy := int(center.y / CELL)
+	var r := int(ceil(r_cells))
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			var x := cx + dx
+			var y := cy + dy
+			if dx * dx + dy * dy <= r_cells * r_cells and x >= 0 and y >= 0 and x < GW and y < GH:
+				out.append(y * GW + x)
+	return out
+
+
 func _upload_mask(animate: bool, origin := Vector2(0.5, 0.5)) -> void:
 	if animate:
 		prev_tex.update(mask_img)
@@ -1273,7 +1287,7 @@ func complete_growth(meet: Vector2) -> void:
 	var bomb_before := _bomb_cells()
 	for i in trail_list:
 		_set_cell(i, stroke_origin)
-	var flipped := _flip_empty_pockets(stroke_origin)
+	var flipped := _flip_empty_pockets(stroke_origin, trail_list)
 	_upload_mask(true, meet / FIELD_SIZE)
 	_fade_line(grow_line_a, false)
 	_fade_line(grow_line_b, false)
@@ -1330,12 +1344,24 @@ func _check_deaths() -> void:
 			_capture(b)
 
 
-## Splits the invaded territory into pockets. Bouncer-free pockets flip to
-## `color`. Tiny pockets trap their bouncers and flip too. Returns cells flipped.
-func _flip_empty_pockets(color: int) -> int:
+## Splits the invaded territory into pockets. Only pockets that touch the
+## new wall (or blast), i.e. `seeds`, can change: bouncer-free ones flip to
+## `color`, tiny ones trap their bouncers and flip. Pockets elsewhere are
+## left alone even if empty. Returns cells flipped.
+func _flip_empty_pockets(color: int, seeds: PackedInt32Array) -> int:
 	var invaded := 1 - color
 	var seen := PackedByteArray()
 	seen.resize(GW * GH)
+	# cells next to the new wall: a pocket must include one of these to change
+	var near := PackedByteArray()
+	near.resize(GW * GH)
+	for i in seeds:
+		var x := i % GW
+		near[i] = 1
+		if x > 0: near[i - 1] = 1
+		if x < GW - 1: near[i + 1] = 1
+		if i >= GW: near[i - GW] = 1
+		if i < GW * (GH - 1): near[i + GW] = 1
 	var occ := {}
 	for b in bouncers:
 		if b.side == invaded and b.kind in ["basic", "stalker", "boss"]:
@@ -1350,12 +1376,15 @@ func _flip_empty_pockets(color: int) -> int:
 			continue
 		var pocket := PackedInt32Array()
 		var inside: Array = []
+		var touches := false
 		var stack := PackedInt32Array([start])
 		seen[start] = 1
 		while stack.size() > 0:
 			var i: int = stack[stack.size() - 1]
 			stack.remove_at(stack.size() - 1)
 			pocket.append(i)
+			if near[i] == 1:
+				touches = true
 			if occ.has(i):
 				inside.append_array(occ[i])
 			var x := i % GW
@@ -1371,6 +1400,8 @@ func _flip_empty_pockets(color: int) -> int:
 			if i < GW * (GH - 1) and seen[i + GW] == 0 and mask[i + GW] == invaded:
 				seen[i + GW] = 1
 				stack.append(i + GW)
+		if not touches:
+			continue
 		if inside.is_empty() or pocket.size() < capture_cells:
 			for b in inside:
 				_capture(b)
@@ -1594,7 +1625,7 @@ func _explode(it: Dictionary) -> void:
 	it.alive = false
 	var before := _bomb_cells()
 	paint_disc(it.pos, BOMB_R, it.color)
-	_flip_empty_pockets(it.color)
+	_flip_empty_pockets(it.color, _disc_cells(it.pos, BOMB_R + 1.0))
 	_upload_mask(true, it.pos / FIELD_SIZE)
 	audio.play("bomb", 0.0, 0.05)
 	shake = 1.0

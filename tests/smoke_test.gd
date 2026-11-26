@@ -126,6 +126,19 @@ func run() -> void:
 	grow_out()
 	check(g.scary_percent() > before + 3.0, "closing a loop claims the enclosed pocket")
 
+	# Only pockets touching the new wall change. On a checkerboard with no
+	# bouncers, a small claim must not flip faraway empty squares.
+	setup({"layout": ["checker", 3, 4]})
+	var far_before: int = g.type_at(Vector2(600, 700))
+	var far2_before: int = g.type_at(Vector2(40, 700))
+	var start_type: int = g.type_at(Vector2(100, 90))
+	# a scoop from the top-left square into its neighbour and back
+	draw([Vector2(100, 90), Vector2(260, 90), Vector2(260, 150), Vector2(100, 150)])
+	grow_out()
+	check(g.type_at(Vector2(600, 700)) == far_before and g.type_at(Vector2(40, 700)) == far2_before,
+		"empty pockets that don't touch the new wall are left alone")
+	check(g.type_at(Vector2(240, 120)) == start_type, "the pocket the wall cut off does flip")
+
 	# ---------------------------------------------------------------- trapping
 	setup()
 	var trapped := add_b("basic", g.CUTE, Vector2(40, 325))
