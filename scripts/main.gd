@@ -71,6 +71,8 @@ var next_shift := 0.0
 var next_spawn := 0.0
 var next_item := 0.0
 var spawn_n := 0
+var since_claim := 0.0          # seconds since the last finished wall (Endless anti-idle)
+var lbl_idle: Label
 
 # stroke
 var stroking := false
@@ -537,6 +539,13 @@ func _build_hud() -> void:
 	lbl_goal.size = Vector2(300, 60)
 	lbl_goal.position = Vector2(390, 50)
 	hud.add_child(lbl_goal)
+	lbl_idle = _label(font_ui_bold, 19, PINK)
+	lbl_idle.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	lbl_idle.size = Vector2(320, 28)
+	lbl_idle.position = Vector2(370, 108)
+	lbl_idle.text = "Keep claiming to score!"
+	lbl_idle.visible = false
+	hud.add_child(lbl_idle)
 	meter = Node2D.new()
 	meter.draw.connect(_draw_meter)
 	hud.add_child(meter)
@@ -854,6 +863,7 @@ func start_endless() -> void:
 	next_item = 15.0
 	spawn_n = 0
 	score = 0.0
+	since_claim = 0.0
 	_spawn_bouncer("basic", CUTE)
 	_spawn_bouncer("basic", SCARY)
 	werecat.set_target(scary_percent() / 100.0)
@@ -1314,6 +1324,7 @@ func complete_growth(meet: Vector2) -> void:
 		werecat.strike()
 		shake = maxf(shake, 0.4)
 	_clear_stroke()
+	since_claim = 0.0
 	_after_territory_change(bomb_before, stroke_origin)
 	werecat.set_target(scary_percent() / 100.0)
 	if flipped > 0 and mode == "endless":
@@ -1976,9 +1987,21 @@ func step_endless(delta: float) -> void:
 		var at: Variant = _free_spot(0, 20.0, true)
 		if at != null:
 			_spawn_item(["bomb", "charm", "bomb", "seed"][rng.randi_range(0, 3)], rng.randi_range(0, 1), at)
+	since_claim += delta
 	var s := scary_percent()
 	if s >= goal_min and s <= goal_max:
-		score += 10.0 * delta
+		score += 10.0 * delta * activity_factor()
+
+
+## Endless anti-idle: points only flow while you're actively claiming.
+## Full rate for ACTIVE_FULL s after each finished wall, fading to zero
+## over ACTIVE_FADE s. Letting the drifting band pass over you scores nothing.
+const ACTIVE_FULL := 6.0
+const ACTIVE_FADE := 4.0
+
+
+func activity_factor() -> float:
+	return clampf(1.0 - (since_claim - ACTIVE_FULL) / ACTIVE_FADE, 0.0, 1.0)
 
 
 const ENDLESS_FIRST_GAP := 20.0
@@ -2015,8 +2038,14 @@ func _update_hud() -> void:
 	if mode == "endless":
 		var n := endless_creature_count()
 		lbl_goal_head.text = "SCORE · %d CREATURE%s" % [n, "" if n == 1 else "S"]
+		var f := activity_factor()
+		lbl_idle.visible = f < 1.0
+		lbl_idle.modulate.a = 0.6 + 0.4 * absf(sin(clock * 4.0))
+		lbl_goal.modulate = Color(1, 1, 1, 0.45 + 0.55 * f)
 		lbl_goal.text = "%d" % roundi(score)
 	else:
+		lbl_idle.visible = false
+		lbl_goal.modulate = Color.WHITE
 		var gt := goal_text(goal_min, goal_max)
 		lbl_goal_head.text = gt[0]
 		lbl_goal.text = gt[1]

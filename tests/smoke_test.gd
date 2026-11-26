@@ -303,6 +303,35 @@ func run() -> void:
 		g.step_endless(1.0 / 60.0)
 	check(g.score > 0.0, "endless scores while inside the band")
 
+	# Anti-idle: sitting in the band without claiming stops scoring
+	g.start_endless()
+	for b in g.bouncers.duplicate():
+		g._capture(b)
+	g.next_spawn = 1e9
+	g.next_item = 1e9
+	g.next_shift = 1e9
+	var idle_start: float = g.score
+	for i in 60 * 40:
+		g.clock += 1.0 / 60.0
+		var s0: float = g.scary_percent()
+		g.band_target = s0
+		g.goal_min = s0 - 8.0
+		g.goal_max = s0 + 8.0
+		g.step_endless(1.0 / 60.0)
+	var idle_gain: float = g.score - idle_start
+	check(idle_gain < 10.0 * (g.ACTIVE_FULL + g.ACTIVE_FADE) + 1.0, "idling in the band stops scoring (%.0f pts in 40 s)" % idle_gain)
+	draw([Vector2(100, 600), Vector2(100, -10)])
+	grow_out()
+	var after_claim: float = g.score
+	for i in 60 * 3:
+		g.clock += 1.0 / 60.0
+		var s1: float = g.scary_percent()
+		g.goal_min = s1 - 8.0
+		g.goal_max = s1 + 8.0
+		g.band_target = s1
+		g.step_endless(1.0 / 60.0)
+	check(g.score - after_claim > 25.0, "finishing a wall turns scoring back on")
+
 	# Endless keeps adding creatures without a cap (wisps capped at 2)
 	g.start_endless()
 	for i in 60 * 400:
