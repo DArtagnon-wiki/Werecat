@@ -365,14 +365,20 @@ func run() -> void:
 	g._check_deaths()
 	check(not g.items[0].alive, "claiming a den's ground closes it")
 
-	setup({"fuzzies": 3, "goal": [0, 100], "items": [{"kind": "nest", "side": g.CUTE, "at": Vector2(0.5, 0.2)}]})
-	check(g.fuzzies_left() == 3 and not g.objectives_done(), "a fuzzies night needs its fuzzies")
-	sim(22.0)
-	check(g.fuzzy_count() >= 3 and g.fuzzies_left() == 0, "gift boxes hatch fuzzies past the goal (%d)" % g.fuzzy_count())
+	setup({"items": [{"kind": "nest", "side": g.CUTE, "at": Vector2(0.5, 0.2)}]})
+	sim(14.0)
+	check(g.fuzzy_count() >= 2, "gift boxes hatch fuzzies (%d)" % g.fuzzy_count())
 
-	setup({"fuzzies": 2, "goal": [0, 100]})
+	setup({"pens": 2, "goal": [0, 100]})
 	g.step_goal(0.1)
-	check(g.state == "lost" and g.lose_reason.begins_with("No fuzzies"), "a fuzzies night with no fuzzies and no gift box ends at once")
+	check(g.state == "lost" and g.lose_reason.begins_with("Not enough bats"), "a pens night with too few bats and no roost ends at once")
+
+	# placed creatures and push goals
+	setup({"bouncers": [{"kind": "basic", "side": g.CUTE, "count": 2, "speed": 1.0, "at": [Vector2(0.2, 0.2), Vector2(0.8, 0.25)]}]})
+	check(g.bouncers.size() == 2 and g.bouncers[0].pos.distance_to(Vector2(128, 149)) < 2.0, "creatures can start at set spots")
+	var pg: Array = g.push_goal([1, 30, 10], 40.0)
+	var pc: Array = g.push_goal([-1, 35, 8], 70.0)
+	check(pg == [70, 80] and pc == [27, 35], "push specs make bands 30+ points from the start")
 
 	setup({"pens": 2, "goal": [0, 100]})
 	var b1 := add_b("basic", g.SCARY, Vector2(150, 600), Vector2.ZERO)
@@ -392,6 +398,7 @@ func run() -> void:
 
 	# ---------------------------------------------------------------- all levels
 	var lv_ok := true
+	var rules_ok := true
 	for i in g.levels.size():
 		var lv: Dictionary = g.levels[i]
 		g.open_intro(i)
@@ -403,6 +410,13 @@ func run() -> void:
 		if g.bouncers.size() != want:
 			printerr("  level %s: spawned %d of %d bouncers" % [lv.id, g.bouncers.size(), want])
 			lv_ok = false
+		var gap := maxf(float(lv.goal[0]) - s0, s0 - float(lv.goal[1]))
+		if gap < 29.0:
+			printerr("  level %s starts only %.1f points from its band (%.1f%%, %s)" % [lv.id, gap, s0, str(lv.goal)])
+			rules_ok = false
+		if lv.has("fuzzies"):
+			printerr("  level %s still uses the fuzzies win condition" % lv.id)
+			rules_ok = false
 		if s0 >= lv.goal[0] and s0 <= lv.goal[1] and g.objectives_done():
 			printerr("  level %s starts solved (%.1f%% in band, objectives done)" % [lv.id, s0])
 			lv_ok = false
@@ -422,6 +436,7 @@ func run() -> void:
 		print("  level %s %-16s start %4.1f%%  goal %d-%d  bouncers %d" % [lv.id, lv.name, s0, lv.goal[0], lv.goal[1], want])
 	check(lv_ok, "all %d levels load, spawn everything, don't start solved, and simulate cleanly" % g.levels.size())
 	check(g.levels.size() == 100, "there are 100 levels")
+	check(rules_ok, "every night starts 30+ points from its band and none uses the fuzzies win condition")
 
 	# ---------------------------------------------------------------- graphics tiers + perf paths
 	setup()

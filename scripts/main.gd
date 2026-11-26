@@ -1240,7 +1240,7 @@ func _tip_icon(tip: String) -> Texture2D:
 		"slug": return T.ent_slug_head
 		"seed": return T.ent_seed_scary
 		"nest": return T.ent_nest_scary
-		"gift", "fuzzies": return T.ent_nest_cute
+		"gift": return T.ent_nest_cute
 		"den": return T.ent_den_scary
 		"huggy": return T.ent_den_cute
 		"burrow": return T.ent_burrow_scary
@@ -1397,6 +1397,21 @@ func _load_layout(lv: Dictionary) -> void:
 	freeze_t = 0.0
 	_rebuild_tex_bytes()
 	_upload_mask(false)
+	if lv.has("push"):
+		lv["goal"] = push_goal(lv.push, scary_percent())
+
+
+## A night's band from its push spec: `dir` +1 = make it Scarier, -1 = make it
+## Cuter; the band's near edge is `dist` points from the starting split.
+static func push_goal(push: Array, start: float) -> Array:
+	var dir: int = push[0]
+	var dist: float = push[1]
+	var width: float = push[2] if push.size() > 2 else 10.0
+	if dir > 0:
+		var lo := minf(start + dist, 96.0)
+		return [int(round(lo)), int(round(minf(lo + width, 100.0)))]
+	var hi := maxf(start - dist, 4.0)
+	return [int(round(maxf(hi - width, 0.0))), int(round(hi))]
 
 
 func _recount() -> void:
@@ -2046,8 +2061,14 @@ func _spawn_level_entities(lv: Dictionary) -> void:
 	for spec in lv.items:
 		_spawn_item(spec.kind, spec.side, spec.at * FIELD_SIZE)
 	for spec in lv.bouncers:
+		var ats: Array = spec.get("at", [])
 		for k in spec.count:
-			_spawn_bouncer(spec.kind, spec.side, spec.speed)
+			if k < ats.size():
+				var p: Vector2 = ats[k] * FIELD_SIZE
+				paint_disc(p, 5.0, int(spec.side))
+				_spawn_bouncer(spec.kind, spec.side, spec.speed, p)
+			else:
+				_spawn_bouncer(spec.kind, spec.side, spec.speed)
 
 
 func _free_spot(side: int, radius: float, anywhere := false) -> Variant:
@@ -2105,6 +2126,8 @@ func _spawn_bouncer(kind: String, side: int, speed := 1.0, at: Variant = null) -
 	if p == null:
 		return false
 	var ang := rng.randf_range(0.35, 1.22) + PI / 2.0 * rng.randi_range(0, 3)
+	if mode == "level":
+		speed *= float(level.get("tempo", 1.0))   # per-night difficulty (tuned)
 	var spd: float = BOUNCER_SPEED * speed * {"basic": 1.0, "stalker": 1.05, "wisp": 0.65, "carver": 0.62, "boss": 0.85, "elite": 0.75}[kind]
 	var s := Sprite2D.new()
 	s.texture = tex
@@ -2698,16 +2721,11 @@ func holds_left() -> int:
 
 
 func objectives_done() -> bool:
-	return targets_left() == 0 and holds_left() == 0 and pens_left() == 0 and fuzzies_left() == 0
+	return targets_left() == 0 and holds_left() == 0 and pens_left() == 0
 
 
-## Hatch cap for a generator. Gift boxes on a "need N fuzzies" night can
-## hatch enough to reach the goal plus a couple spare.
-func spawn_cap(sp: Dictionary, side: int) -> int:
-	var cap := int(sp.cap)
-	if sp.kind == "basic" and side == CUTE and mode == "level":
-		cap = maxi(cap, int(level.get("fuzzies", 0)) + 2)
-	return cap
+func spawn_cap(sp: Dictionary, _side: int) -> int:
+	return int(sp.cap)
 
 
 func fuzzy_count() -> int:
@@ -2718,12 +2736,6 @@ func fuzzy_count() -> int:
 	return n
 
 
-func fuzzies_left() -> int:
-	if mode != "level":
-		return 0
-	return maxi(0, int(level.get("fuzzies", 0)) - fuzzy_count())
-
-
 var lose_reason := ""
 
 
@@ -2731,8 +2743,6 @@ var lose_reason := ""
 func impossible_reason() -> String:
 	if mode != "level":
 		return ""
-	if fuzzies_left() > 0 and not _can_hatch("basic", CUTE):
-		return "No fuzzies left to hatch"
 	var need := int(level.get("pens", 0))
 	if need > 0:
 		var bats := 0
@@ -2998,8 +3008,6 @@ func _objective_text() -> String:
 	if int(level.get("pens", 0)) > 0:
 		update_lone_bats()
 		parts.append("Lone bats %d/%d" % [mini(lone_bats.size(), int(level.pens)), int(level.pens)])
-	if int(level.get("fuzzies", 0)) > 0:
-		parts.append("Fuzzies %d/%d" % [fuzzy_count(), int(level.fuzzies)])
 	var total_t := int(level.get("_targets", 0))
 	if total_t > 0:
 		parts.append("Targets %d/%d" % [total_t - targets_left(), total_t])

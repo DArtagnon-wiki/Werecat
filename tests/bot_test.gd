@@ -59,16 +59,81 @@ func random_cell_of(side: int, focus: Variant = null, radius := 170.0) -> Varian
 	return null if focus == null else random_cell_of(side)
 
 
-func stroke(side: int, depth: float, focus: Variant = null) -> void:
-	## A U-shaped scoop (or a straight line when curl is limited): out into
-	## enemy ground, across, and back.
+## Shortest distance from any threat to a polyline.
+func clearance(pts: Array, side: int) -> float:
+	var best := 1e9
+	for bo in g.bouncers:
+		if bo.side == side and bo.kind in ["basic", "carver", "elite"]:
+			continue      # our own creatures live on our side, away from the wall
+		for i in range(1, pts.size()):
+			var a: Vector2 = pts[i - 1]
+			var b: Vector2 = pts[i]
+			var q := Geometry2D.get_closest_point_to_segment(bo.pos, a, b)
+			best = minf(best, q.distance_to(bo.pos))
+	return best
+
+
+func pocket_has_threat(path: Array, side: int) -> bool:
+	var poly := PackedVector2Array(path)
+	for bo in g.bouncers:
+		if bo.side != side and Geometry2D.is_point_in_polygon(bo.pos, poly):
+			return true
+	return false
+
+
+func make_cand(side: int, depth: float, focus: Variant) -> Variant:
 	var p: Variant = random_cell_of(side, focus)
 	if p == null:
-		return
+		return null
 	var dir := Vector2.from_angle(rng.randf() * TAU)
+	var d := minf(depth, rng.randf_range(90.0, 260.0))
 	if focus != null:
 		dir = ((focus as Vector2) - (p as Vector2)).normalized().rotated(rng.randf_range(-0.5, 0.5))
-		depth = maxf(depth, (p as Vector2).distance_to(focus) + 30.0)
+		d = maxf(d, (p as Vector2).distance_to(focus) + 30.0)
+	var across := dir.orthogonal() * (1.0 if rng.randf() < 0.5 else -1.0)
+	var width := rng.randf_range(50.0, 140.0)
+	var pp: Vector2 = p
+	var path := [pp, pp + dir * d]
+	if not g.effective_curl() in ["straight", "arc"]:
+		path.append(pp + dir * d + across * width)
+		path.append(pp + across * width)
+	return {"p": pp, "dir": dir, "depth": d, "across": across, "width": width, "path": path}
+
+
+## A careful player: try a few walls, take the one that keeps furthest from
+## the creatures, and wait a moment for an opening if none is safe.
+func stroke(side: int, depth: float, focus: Variant = null) -> void:
+	var best: Variant = null
+	var best_c := -1.0
+	for wait_i in 4:
+		for k in 14:
+			var c: Variant = make_cand(side, depth, focus)
+			if c == null:
+				continue
+			var cl := clearance(c.path, side)
+			# prefer pockets with no creature inside (they flip) and room to spare
+			var sc := minf(cl, 120.0)
+			if c.path.size() >= 4 and not pocket_has_threat(c.path, side):
+				sc += 80.0 + minf(c.depth * c.width / 400.0, 60.0)
+			if sc > best_c:
+				best_c = sc
+				best = c
+		if best_c > 150.0 or (best_c > 75.0 and wait_i >= 2):
+			break
+		sim(0.4)
+		if g.state != "play":
+			return
+		best = null
+		best_c = -1.0
+	if best == null:
+		return
+	draw_cand(best)
+
+
+func draw_cand(c: Dictionary) -> void:
+	var p: Vector2 = c.p
+	var dir: Vector2 = c.dir
+	var depth: float = c.depth
 	var curl: String = g.effective_curl()
 	g.begin_stroke(p)
 	var q: Vector2 = p
@@ -81,8 +146,8 @@ func stroke(side: int, depth: float, focus: Variant = null) -> void:
 				return
 		g.end_stroke()
 		return
-	var across := dir.orthogonal() * (1.0 if rng.randf() < 0.5 else -1.0)
-	var width := rng.randf_range(50.0, 140.0)
+	var across: Vector2 = c.across
+	var width: float = c.width
 	var was_active := false
 	var inside_len := 0.0
 	for k in 220:
@@ -243,25 +308,15 @@ func plan() -> Array:
 			return [int(z.side), 90.0, z.center]
 		if not good and z.held:
 			return [1 - int(z.side), 90.0, z.center]
-	# generators: sometimes go close one (never the gift boxes on a fuzzies night)
+	# generators in the territory we're pushing into: sometimes go close one
+	var push_side: int = g.SCARY if g.scary_percent() < g.goal_min else g.CUTE
 	if rng.randf() < 0.45:
 		for it in g.items:
-			if not it.alive or not it.kind in ["nest", "den", "burrow", "lantern"]:
-				continue
-			if it.kind == "nest" and it.side == g.CUTE and int(g.level.get("fuzzies", 0)) > 0:
-				continue
-			if it.kind == "nest" and it.side == g.CUTE and g.goal_min > 50.0:
-				pass
-			elif it.kind == "nest" and it.side == g.CUTE:
-				continue
-			return [1 - int(it.side), 70.0, it.pos]
+			if it.alive and it.kind in ["nest", "den", "burrow", "lantern"] and int(it.side) == 1 - push_side:
+				return [push_side, 70.0, it.pos]
 	if g.pens_left() > 0:
 		var path := pen_cut()
 		return ["path", path] if not path.is_empty() else ["wait"]
-	if g.fuzzies_left() > 0:
-		for it in g.items:
-			if it.alive and it.kind == "nest" and it.side == g.CUTE and g.type_at(it.pos) == g.CUTE:
-				return ["wait"]
 	var s: float = g.scary_percent()
 	if s >= g.goal_min and s <= g.goal_max:
 		return []
@@ -282,6 +337,10 @@ func play_level(i: int, attempt := 0) -> Array:
 	g.open_intro(i)
 	g.begin_play()
 	var strokes := 0
+	var claims := 0
+	var first_gain := -1.0
+	var max_gain := 0.0
+	var before: float = g.scary_percent()
 	while g.state == "play" and strokes < MAX_STROKES and g.clock < 900.0:
 		var pl := plan()
 		if pl.is_empty():
@@ -298,7 +357,23 @@ func play_level(i: int, attempt := 0) -> Array:
 		finish_growth()
 		strokes += 1
 		sim(0.25)
-	return [g.state == "won", strokes, g.lives, g.clock]
+		var now: float = g.scary_percent()
+		var gain := absf(now - before)
+		before = now
+		if gain > 0.5:
+			claims += 1
+			if first_gain < 0.0:
+				first_gain = gain
+			max_gain = maxf(max_gain, gain)
+	return [g.state == "won", strokes, g.lives, g.clock, claims, maxf(first_gain, 0.0), max_gain]
+
+
+## Points the meter has to move from the start to the near edge of the band.
+func need_of(li: int) -> float:
+	g.open_intro(li)
+	var st: float = g.scary_percent()
+	var lv: Dictionary = g.levels[li]
+	return maxf(lv.goal[0] - st, st - lv.goal[1])
 
 
 func run() -> void:
@@ -310,18 +385,27 @@ func run() -> void:
 			var wins := 0
 			var strokes: Array = []
 			var times: Array = []
+			var claims: Array = []
+			var biggest := 0.0
+			var first := 0.0
 			for t in n:
 				rng.seed = 900 + t
 				var r := play_level(li, 300 + t)
+				biggest = maxf(biggest, r[6])
+				first += r[5] / n
 				if r[0]:
 					wins += 1
 					strokes.append(r[1])
 					times.append(r[3])
+					claims.append(r[4])
 			strokes.sort()
 			times.sort()
+			claims.sort()
 			var ms: int = strokes[strokes.size() / 2] if strokes.size() else -1
 			var mt: float = times[times.size() / 2] if times.size() else -1.0
-			print("STAT %s %-20s win %2d/%d  median strokes %3d  median sim time %5.1fs" % [g.levels[li].id, g.levels[li].name, wins, n, ms, mt])
+			var mc: int = claims[claims.size() / 2] if claims.size() else -1
+			var lv: Dictionary = g.levels[li]
+			print("STAT %s %-20s win %2d/%d  claims %3d  strokes %3d  first %4.1f  biggest %4.1f  need %4.1f  t %5.1fs" % [lv.id, lv.name, wins, n, mc, ms, first, biggest, need_of(li), mt])
 		quit()
 		return
 	if args.size() >= 1:

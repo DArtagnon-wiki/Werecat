@@ -14,14 +14,14 @@ A Cute vs. Scary territory puzzle game for tweens (creepy and menacing, no gore)
 | 4 · Hallowed Ground | Rules that change | Shrines (bless/curse), line curl: straight, arcs, curly |
 | 5 · Blood Moon | Hunters of the night | Idols, crowned creatures, wisps, hunters, the Night Mother |
 | 6 · The Hunt | Mastery | Remixes of everything, ending with The Last Idol |
-| 7 · Gift Boxes | Fuzzies to keep | Gift boxes hatch fuzzies; win needs N fuzzies alive |
+| 7 · Gift Boxes | Generators to push into | Gift boxes and huggy huts in the ground you're taking |
 | 8 · Strange Shores | New ground shapes | Diagonals, donuts, archipelagos, waves, an hourglass |
 | 9 · Hunter Dens | Generators that hunt | Dens (hunter bats) and huggy huts (huggy puffs) |
 | 10 · Burrows | Tunnelers on tap | Grub burrows and candy burrows |
 | 11 · Lantern Light | Wisps on tap | Wisp lanterns |
-| 12 · Stone Halls | Geometry | Corridors, peg grids, a vault, a diamond hall, a maze |
+| 12 · Stone Halls | Bricks and straight lines | Corridors, peg grids with straight lines, a vault, a cursed diamond hall, a maze |
 | 13 · Bat Pens | Lone bats | Win needs N bats each alone in its own Scary pocket; doors between stone rooms |
-| 14 · Shepherd | Fuzzies and lone bats | Keeping fuzzies while penning bats |
+| 14 · Guardians | Guarded rings | Hold rings with a creature starting inside each, stone halos, rings plus lone bats |
 | 15 · Swarm | Generators everywhere | Many generators at once, the Hive Queen |
 | 16 · Holy Orders | Rings and generators | Hold rings and shrines guarded by generators |
 | 17 · Bone Yard | Targets with backup | Idols and crowned creatures with generators |
@@ -29,9 +29,16 @@ A Cute vs. Scary territory puzzle game for tweens (creepy and menacing, no gore)
 | 19 · Eclipse | Everything mixed | Mixed objectives on new shapes |
 | 20 · Midnight | The gauntlet | Remixes, ending with Midnight |
 
-Each world goes introduce, develop, twist, combine, finale. Worlds 1-6 are tuned with the bot's measured win rate (about 97% in World 1 down to about 55% in World 6). Worlds 7-20 have a first tuning pass: the bot beats every night, and walkovers and near-impossible nights were adjusted, but the curve within those worlds still needs human playtesting.
+Each world goes introduce, develop, twist, combine, finale, and every night follows the same design rules (checked by the smoke tests):
 
-A night that can no longer be won ends at once with the reason (for example, no fuzzies left and no gift box to hatch more).
+- The gold band starts at least 30 points from the starting split (nights declare `"push": [direction, distance, width]` and the band is measured from the real starting ground), so no night falls to one or two swipes.
+- The ground you push into is guarded by several creatures, so grabbing huge chunks early is risky.
+- Generators sit in the ground you're pushing into, so closing them is part of the job.
+- Nights combine mechanics: stone with straight-line curses, hold rings with a creature starting inside each (some behind stone halos), lone bats plus rings, mazes with hunters, and so on.
+
+Difficulty is tuned per night with a creature-speed "tempo" (`TEMPO` in `scripts/levels.gd`, tuned by `tools/tune_tempo.py`) against the bot's win rate: about 85% in World 1 down to about 30% in World 20, with each world's finale its hardest night. The bot plays like a careful person: it picks walls that keep clear of creatures and pockets with nobody inside.
+
+A night that can no longer be won ends at once with the reason (for example, too few bats left to pen and no roost to hatch more).
 
 **Generators** keep hatching until their ground flips: bat roosts and gift boxes (bats / fuzzies), hunter dens and huggy huts (hunters), grub and candy burrows (carvers), and wisp lanterns (wisps, both sides, max 2).
 
