@@ -13,7 +13,7 @@ A Cute vs. Scary territory puzzle game for tweens (creepy and menacing, no gore)
 | 3 · Creeping Dark | Gloom grubs and sugar slugs (carvers), thorn seeds, bat roosts |
 | 4 · Blood Moon | Wisps (cross any border), hunters (chase your line), the Night Mother |
 
-Plus **Endless**: a drifting goal band, escalating bouncers and random bombs, charms and seeds. Progress, stars and best score are saved on the device.
+Plus **Endless**: a drifting goal band, random bombs, charms and seeds, and creatures that keep arriving with no cap (faster over time, max 2 untrappable wisps). To run far, you have to trap them. Progress, stars and best score are saved on the device.
 
 **Play:** https://dartagnon-wiki.github.io/Werecat/ (works in Safari on iPhone and Chrome on Android; use "Add to Home Screen" for full-screen play).
 

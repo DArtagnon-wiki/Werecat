@@ -303,5 +303,16 @@ func run() -> void:
 		g.step_endless(1.0 / 60.0)
 	check(g.score > 0.0, "endless scores while inside the band")
 
+	# Endless keeps adding creatures without a cap (wisps capped at 2)
+	g.start_endless()
+	for i in 60 * 400:
+		g.clock += 1.0 / 60.0
+		g.step_endless(1.0 / 60.0)
+	var wisps := 0
+	for b in g.bouncers:
+		wisps += 1 if b.kind == "wisp" else 0
+	check(g.bouncers.size() > 20, "endless spawns past the old cap of 9 (%d after 400 s)" % g.bouncers.size())
+	check(wisps <= 2, "endless never has more than 2 untrappable wisps")
+
 	print("%d failure(s)" % failures)
 	quit(1 if failures > 0 else 0)

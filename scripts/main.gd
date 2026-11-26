@@ -850,7 +850,7 @@ func start_endless() -> void:
 	goal_min = 42.0
 	goal_max = 58.0
 	next_shift = 12.0
-	next_spawn = 25.0
+	next_spawn = ENDLESS_FIRST_GAP
 	next_item = 15.0
 	spawn_n = 0
 	score = 0.0
@@ -1967,12 +1967,10 @@ func step_endless(delta: float) -> void:
 		next_shift += 12.0
 		band_target = rng.randf_range(15.0, 85.0)
 	if clock >= next_spawn:
-		next_spawn += 25.0
+		# No cap: creatures keep coming, faster and faster. Trap them to survive.
 		spawn_n += 1
-		if bouncers.size() < 9:
-			var kinds := ["basic", "basic", "stalker", "wisp", "carver"]
-			var kind: String = kinds[mini(spawn_n - 1, kinds.size() - 1) if spawn_n < 5 else rng.randi_range(0, kinds.size() - 1)]
-			_spawn_bouncer(kind, spawn_n % 2, 1.0 + clock / 600.0)
+		next_spawn += maxf(ENDLESS_MIN_GAP, ENDLESS_FIRST_GAP - spawn_n * 0.6)
+		_endless_spawn()
 	if clock >= next_item:
 		next_item += 18.0
 		var at: Variant = _free_spot(0, 20.0, true)
@@ -1983,6 +1981,31 @@ func step_endless(delta: float) -> void:
 		score += 10.0 * delta
 
 
+const ENDLESS_FIRST_GAP := 20.0
+const ENDLESS_MIN_GAP := 8.0
+const ENDLESS_MAX_WISPS := 2   # wisps can't be trapped, so they never pile up
+
+
+func endless_creature_count() -> int:
+	return bouncers.size()
+
+
+func _endless_spawn() -> void:
+	var side := spawn_n % 2
+	var wisps := 0
+	for b in bouncers:
+		if b.kind == "wisp":
+			wisps += 1
+	var pool := ["basic", "basic", "basic", "stalker", "carver"]
+	if wisps < ENDLESS_MAX_WISPS and spawn_n >= 4:
+		pool.append("wisp")
+	var kind: String = "basic" if spawn_n <= 2 else pool[rng.randi_range(0, pool.size() - 1)]
+	var spd := 1.0 + clock / 600.0
+	# if that side has no room left, the creature appears on the other side
+	if not _spawn_bouncer(kind, side, spd):
+		_spawn_bouncer(kind, 1 - side, spd)
+
+
 func _update_hud() -> void:
 	if not hud.visible:
 		return
@@ -1990,7 +2013,8 @@ func _update_hud() -> void:
 	for i in 3:
 		hearts[i].texture = T.ui_heart if i < lives else T.ui_heart_empty
 	if mode == "endless":
-		lbl_goal_head.text = "SCORE"
+		var n := endless_creature_count()
+		lbl_goal_head.text = "SCORE · %d CREATURE%s" % [n, "" if n == 1 else "S"]
 		lbl_goal.text = "%d" % roundi(score)
 	else:
 		var gt := goal_text(goal_min, goal_max)
