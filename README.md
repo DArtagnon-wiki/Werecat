@@ -4,7 +4,7 @@ A Cute vs. Scary territory puzzle game for tweens (creepy and menacing, no gore)
 
 **How it plays:** the only walls are the field's border. Put your finger down in one territory and draw any shape into the other: that's a safe blueprint. When it gets back to your own side, the edge or moonstone, the real wall grows along it from both ends. If anything touches a grown section before the ends meet, the wall snaps and you lose a heart. When they meet, pockets touching the new wall that have no bouncer inside flip to your color, and bouncers squeezed into tiny pockets next to it are trapped. Pockets elsewhere are never affected. Lifting your finger before closing is free. Hold the meter inside the gold band for 3 seconds to win the night.
 
-**20 nights in 4 worlds**, each teaching something new:
+**30 nights in 6 worlds**, each teaching something new:
 
 | World | New mechanics |
 | --- | --- |
@@ -12,8 +12,12 @@ A Cute vs. Scary territory puzzle game for tweens (creepy and menacing, no gore)
 | 2 · Boom Night | Bombs, moonstone, moon charms (freeze) |
 | 3 · Creeping Dark | Gloom grubs and sugar slugs (carvers), thorn seeds, bat roosts |
 | 4 · Blood Moon | Wisps (cross any border), hunters (chase your line), the Night Mother |
+| 5 · Hallowed Ground | Must-hold regions; shrines that bless or curse while their color holds them (wall speed, creature speed, line curl); line curl from straight to free |
+| 6 · The Hunt | Must-destroy targets: idols (claim the ground under them) and crowned creatures (trap them) |
 
-Plus **Endless**: a drifting goal band, random bombs, charms and seeds, and creatures that keep arriving with no cap (faster over time, max 2 untrappable wisps). To run far, you have to trap them. Points only flow while you're actively claiming: full rate for 6 s after each finished wall, fading to zero over the next 4 s, so idling while the band drifts over you scores nothing. Progress, stars and best score are saved on the device.
+A color can never be wiped out: if a claim would take a color's last ground, its biggest pocket survives as a foothold.
+
+Plus **Endless**: a drifting goal band, random bombs, charms and seeds, and creatures that keep arriving with no cap (faster over time, max 2 untrappable wisps). To run far, you have to trap them. Points only flow while you're actively claiming: full rate for 6 s after each finished wall, fading to zero over the next 4 s, so idling while the band drifts over you scores nothing. Sitting in a band that has settled scores normally. Progress, stars and best score are saved on the device.
 
 **Play:** https://dartagnon-wiki.github.io/Werecat/ (works in Safari on iPhone and Chrome on Android; use "Add to Home Screen" for full-screen play).
 

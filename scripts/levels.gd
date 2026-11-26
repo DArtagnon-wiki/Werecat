@@ -13,7 +13,7 @@ const CUTE := 0
 const SCARY := 1
 const STONE := 2
 
-const WORLDS := ["Moonrise", "Boom Night", "Creeping Dark", "Blood Moon"]
+const WORLDS := ["Moonrise", "Boom Night", "Creeping Dark", "Blood Moon", "Hallowed Ground", "The Hunt"]
 
 const TIPS := {
 	"claim": ["Claim ground", "Drag from the Scary side into the Cute side and back. Then the wall grows from both ends. If a bouncer touches it before the ends meet, it snaps!"],
@@ -29,6 +29,14 @@ const TIPS := {
 	"wisp": ["Wisps", "Wisps drift through every territory, and they snap any trail they touch."],
 	"stalker": ["Hunters", "Hunter bats chase the growing ends of your wall. Keep walls short, or bait them away."],
 	"boss": ["The Night Mother", "She hunts your trail and calls bats from the roosts. Trap her to break the spell."],
+	"hold": ["Hold the ground", "The flagged ring must be yours to win: fill it 60% with its color, and keep it that way."],
+	"shrine": ["Shrines", "While its color holds a shrine, it changes the rules. Take this one for Cute and your walls grow fast."],
+	"curl": ["Straight lines", "Tonight your lines only go straight: aim, then push. Take the quill shrine for Cute to free them."],
+	"arcs": ["Gentle arcs", "Your line turns slowly tonight and trails your finger like a leash. Plan wide curves."],
+	"curse": ["Curses", "Shrines held by Scary curse you: slow walls, fast creatures. Take them back to lift the curse."],
+	"idol": ["The bone idol", "The idol must fall before you can win. Claim the ground under it for Cute, even though tonight you want Scary."],
+	"idols": ["Sugar idols", "Both idols must fall. Claim the Cute ground they stand on, then make the night Cute again."],
+	"elite": ["The crowned bat", "The crowned bat must be trapped before you can win. Squeeze it into a tiny pocket."],
 }
 
 static func _b(kind: String, side: int, count := 1, speed := 1.0) -> Dictionary:
@@ -37,6 +45,12 @@ static func _b(kind: String, side: int, count := 1, speed := 1.0) -> Dictionary:
 
 static func _i(kind: String, side: int, u: float, v: float) -> Dictionary:
 	return {"kind": kind, "side": side, "at": Vector2(u, v)}
+
+
+## Zone: kind "hold" (must be held by `side` to win) or "shrine" (its effect
+## is active while `side` holds it). r is a fraction of the field's width.
+static func _z(kind: String, side: int, u: float, v: float, r: float, effect := "") -> Dictionary:
+	return {"kind": kind, "side": side, "at": Vector2(u, v), "r": r, "effect": effect}
 
 
 static func all() -> Array:
@@ -96,6 +110,39 @@ static func all() -> Array:
 		{"id": "4-5", "name": "Night Mother", "layout": ["island", 0.36, SCARY], "stone": ["pillars", 3], "goal": [0, 12], "par": 140,
 		 "bouncers": [_b("boss", SCARY, 1, 0.8), _b("basic", CUTE), _b("wisp", SCARY)],
 		 "items": [_i("nest", SCARY, 0.5, 0.36), _i("charm", 0, 0.12, 0.1), _i("charm", 0, 0.88, 0.9), _i("bomb", 0, 0.1, 0.9)], "tip": "boss"},
+		# ------------------------------------------------ World 5: Hallowed Ground
+		{"id": "5-1", "name": "Hold the Altar", "layout": ["split_h", 0.5], "goal": [56, 68], "par": 60,
+		 "bouncers": [_b("basic", CUTE), _b("basic", SCARY)], "items": [],
+		 "zones": [_z("hold", SCARY, 0.5, 0.26, 0.14)], "tip": "hold"},
+		{"id": "5-2", "name": "Swift Shrine", "layout": ["split_v", 0.5], "goal": [70, 85], "par": 60,
+		 "bouncers": [_b("basic", CUTE), _b("basic", SCARY, 2)], "items": [],
+		 "zones": [_z("shrine", CUTE, 0.76, 0.5, 0.13, "swift")], "tip": "shrine"},
+		{"id": "5-3", "name": "Straight and Narrow", "layout": ["split_h", 0.45], "curl": "straight", "goal": [20, 35], "par": 70,
+		 "bouncers": [_b("basic", CUTE), _b("basic", SCARY)], "items": [],
+		 "zones": [_z("shrine", CUTE, 0.5, 0.74, 0.13, "true")], "tip": "curl"},
+		{"id": "5-4", "name": "Gentle Arcs", "layout": ["corners", 0.32], "curl": "arc", "goal": [15, 28], "par": 80,
+		 "bouncers": [_b("basic", CUTE), _b("basic", SCARY, 2)], "items": [],
+		 "zones": [_z("hold", CUTE, 0.13, 0.11, 0.1), _z("hold", CUTE, 0.87, 0.89, 0.1)], "tip": "arcs"},
+		{"id": "5-5", "name": "Cursed Ground", "layout": ["checker", 2, 3], "goal": [60, 70], "par": 90,
+		 "bouncers": [_b("basic", CUTE), _b("basic", SCARY)], "items": [],
+		 "zones": [_z("shrine", SCARY, 0.75, 0.167, 0.12, "slow"), _z("shrine", SCARY, 0.25, 0.5, 0.12, "haste"),
+			_z("hold", SCARY, 0.75, 0.5, 0.12)], "tip": "curse"},
+		# ------------------------------------------------ World 6: The Hunt
+		{"id": "6-1", "name": "Bone Idol", "layout": ["split_h", 0.5], "goal": [65, 80], "par": 80,
+		 "bouncers": [_b("basic", CUTE), _b("basic", SCARY)],
+		 "items": [_i("idol", SCARY, 0.5, 0.86)], "tip": "idol"},
+		{"id": "6-2", "name": "Sugar Idols", "layout": ["split_h", 0.5], "goal": [15, 30], "par": 90,
+		 "bouncers": [_b("basic", CUTE), _b("basic", SCARY)],
+		 "items": [_i("idol", CUTE, 0.18, 0.12), _i("idol", CUTE, 0.82, 0.16)], "tip": "idols"},
+		{"id": "6-3", "name": "Crowned Bat", "layout": ["split_h", 0.5], "goal": [20, 35], "par": 90,
+		 "bouncers": [_b("basic", CUTE), _b("elite", SCARY), _b("basic", SCARY)], "items": [], "tip": "elite"},
+		{"id": "6-4", "name": "Curled Hunt", "layout": ["split_v", 0.5], "curl": "curly", "goal": [38, 46], "par": 100,
+		 "bouncers": [_b("elite", CUTE), _b("basic", SCARY)],
+		 "items": [_i("idol", SCARY, 0.86, 0.5)], "tip": ""},
+		{"id": "6-5", "name": "The Last Idol", "layout": ["rings", 4], "goal": [75, 90], "par": 150,
+		 "bouncers": [_b("basic", CUTE), _b("elite", SCARY), _b("basic", SCARY)],
+		 "items": [_i("idol", SCARY, 0.5, 0.5), _i("idol", CUTE, 0.14, 0.13)],
+		 "zones": [_z("hold", CUTE, 0.84, 0.86, 0.1), _z("shrine", SCARY, 0.16, 0.84, 0.1, "straight")], "tip": ""},
 	]
 
 

@@ -20,10 +20,17 @@ const FIELD_POS := Vector2(40, 420)
 const FIELD_SIZE := Vector2(640, 744)
 const TRAIL_R := 2.2
 const GROW_SPEED := 380.0        # px/s for each of the two growing ends
+# Line curl: how sharply a drawn line may turn, in degrees per px of line.
+# "true" = follows the finger exactly; "straight" = aim and push.
+const CURL_ORDER := ["straight", "arc", "curly", "true"]
+const CURL_RATE := {"arc": 0.35, "curly": 2.2}
+const CURL_NAMES := {"straight": "straight", "arc": "gentle arcs", "curly": "curly", "true": "free"}
 const BOUNCER_SPEED := 170.0
 const HOLD_TIME := 3.0
 const WC_SCALE := 0.58
 const CAPTURE_FRAC := 0.025
+# bigger creatures can be trapped in bigger pockets
+const CAPTURE_FRAC_BY_KIND := {"elite": 0.07, "boss": 0.04}
 const BOMB_R := 22.0             # cells
 const FREEZE_TIME := 4.0
 const NEST_EVERY := 6.5
@@ -34,6 +41,19 @@ const SEED_MAX_R := 46.0
 const CUTE := 0
 const SCARY := 1
 const STONE := 2
+
+const ZONE_CONTROL := 0.6        # a zone belongs to a color at 60% of its ground
+# Shrine effects. kind: wall (growth speed), curl (line curl), creature (speed)
+const EFFECTS := {
+	"swift": {"kind": "wall", "value": 1.7, "label": "Walls: fast", "icon": "zi_swift"},
+	"slow": {"kind": "wall", "value": 0.55, "label": "Walls: slow", "icon": "zi_slow"},
+	"straight": {"kind": "curl", "value": "straight", "label": "Lines: straight", "icon": "zi_straight"},
+	"arc": {"kind": "curl", "value": "arc", "label": "Lines: gentle arcs", "icon": "zi_arc"},
+	"curly": {"kind": "curl", "value": "curly", "label": "Lines: curly", "icon": "zi_curly"},
+	"true": {"kind": "curl", "value": "true", "label": "Lines: free", "icon": "zi_true"},
+	"haste": {"kind": "creature", "value": 1.4, "label": "Creatures: fast", "icon": "zi_haste"},
+	"calm": {"kind": "creature", "value": 0.7, "label": "Creatures: calm", "icon": "zi_calm"},
+}
 
 const INK := Color("241226")
 const PINK := Color("ffb3cb")
@@ -53,6 +73,14 @@ var scary_count := 0
 var claimable := 1
 var bouncers: Array = []
 var items: Array = []
+var zones: Array = []
+var zone_layer: Node2D
+var lbl_status: Label
+var lbl_obj: Label
+var level_page := 0
+var page_rows: Array = []
+var btn_page_prev: Button
+var btn_page_next: Button
 var lives := 3
 var hold := 0.0
 var goal_min := 0.0
@@ -80,6 +108,14 @@ var stroke_active := false
 var stroke_origin := CUTE
 var last_origin_pt := Vector2.ZERO
 var stroke_points := PackedVector2Array()
+# curl state (non-"true" modes): the line's tip chases the finger
+var curl_mode := "true"
+var tip := Vector2.ZERO
+var tip_heading := 0.0
+var tip_len := 0.0
+var ray_anchor := Vector2.ZERO
+var last_finger := Vector2.ZERO
+var leash: Line2D
 # growth: after a path closes, the wall grows along it from both ends
 var growing := false
 var grow_pts := PackedVector2Array()
@@ -148,7 +184,8 @@ func _ready() -> void:
 	for n in ["bouncer_puff", "bouncer_bat", "fx_sparkle", "fx_ember", "fx_glow", "ui_heart", "ui_heart_empty",
 			"ent_bomb", "ent_charm", "ent_wisp", "ent_hunter", "ent_huggy", "ent_boss", "ent_nest_scary", "ent_nest_cute",
 			"ent_seed_scary", "ent_seed_cute", "ent_grub_head", "ent_grub_seg", "ent_slug_head", "ent_slug_seg",
-			"ui_star", "ui_star_empty", "ui_lock", "ui_pause"]:
+			"ui_star", "ui_star_empty", "ui_lock", "ui_pause", "ent_idol_cute", "ent_idol_scary", "ent_crown",
+			"zi_hold", "zi_swift", "zi_slow", "zi_straight", "zi_arc", "zi_curly", "zi_true", "zi_haste", "zi_calm"]:
 		T[n] = load("res://assets/sprites/%s.png" % n)
 	font_ui = _font("res://assets/fonts/Fredoka.ttf", 500)
 	font_ui_bold = _font("res://assets/fonts/Fredoka.ttf", 650)
@@ -287,6 +324,10 @@ func _build_scene() -> void:
 	frame.draw.connect(_draw_frame)
 	world.add_child(frame)
 
+	zone_layer = Node2D.new()
+	zone_layer.draw.connect(_draw_zones)
+	world.add_child(zone_layer)
+
 	item_layer = Node2D.new()
 	world.add_child(item_layer)
 
@@ -300,6 +341,12 @@ func _build_scene() -> void:
 	world.add_child(grow_line_b)
 	front_a = _make_front()
 	front_b = _make_front()
+	leash = Line2D.new()
+	leash.width = 3.0
+	leash.default_color = Color(1, 1, 1, 0.35)
+	leash.antialiased = true
+	leash.position = FIELD_POS
+	world.add_child(leash)
 
 	bouncer_layer = Node2D.new()
 	world.add_child(bouncer_layer)
@@ -490,6 +537,12 @@ func _show(n: String) -> void:
 		"levels":
 			state = "levels"
 			_refresh_level_select()
+			# open on the page with the newest unlocked night
+			var newest := 0
+			for i in levels.size():
+				if is_unlocked(i):
+					newest = i
+			_set_page(newest / 15)
 		"intro":
 			state = "intro"
 		"pause":
@@ -539,6 +592,14 @@ func _build_hud() -> void:
 	lbl_goal.size = Vector2(300, 60)
 	lbl_goal.position = Vector2(390, 50)
 	hud.add_child(lbl_goal)
+	lbl_status = _label(font_ui_bold, 22, Color("bfe8ff"))
+	lbl_status.position = Vector2(24, 106)
+	lbl_status.size = Vector2(340, 30)
+	hud.add_child(lbl_status)
+	lbl_obj = _label(font_ui_bold, 24, GOLD)
+	lbl_obj.position = Vector2(24, 136)
+	lbl_obj.size = Vector2(340, 32)
+	hud.add_child(lbl_obj)
 	lbl_idle = _label(font_ui_bold, 19, PINK)
 	lbl_idle.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	lbl_idle.size = Vector2(320, 28)
@@ -578,16 +639,23 @@ func _build_level_select() -> void:
 	var back := _button("‹ Back", func() -> void: _show("title"), false, 150, 56, 24)
 	back.position = Vector2(24, 28)
 	c.add_child(back)
-	for w in 4:
-		var y0 := 530.0 + w * 160.0
+	var worlds := Levels.WORLDS.size()
+	for w in worlds:
+		var row := Control.new()
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.position = Vector2(0, 530.0 + (w % 3) * 168.0)
+		c.add_child(row)
+		page_rows.append(row)
 		var hdr := _label(font_title, 30, Color(PINK, 0.95))
 		hdr.text = "%d · %s" % [w + 1, Levels.WORLDS[w]]
-		hdr.position = Vector2(90, y0 - 4)
-		c.add_child(hdr)
+		hdr.position = Vector2(90, -4)
+		row.add_child(hdr)
 		for k in 5:
 			var i := w * 5 + k
+			if i >= levels.size():
+				break
 			var b := Button.new()
-			b.position = Vector2(88 + k * 112, y0 + 38)
+			b.position = Vector2(88 + k * 112, 38)
 			b.size = Vector2(96, 96)
 			b.add_theme_font_override("font", font_ui_bold)
 			b.add_theme_font_size_override("font_size", 30)
@@ -598,14 +666,14 @@ func _build_level_select() -> void:
 			b.pressed.connect(func() -> void:
 				audio.play("click", -4.0)
 				open_intro(i))
-			c.add_child(b)
+			row.add_child(b)
 			var srow := HBoxContainer.new()
 			srow.position = Vector2(8, 66)
 			srow.add_theme_constant_override("separation", 1)
 			srow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			b.add_child(srow)
 			var st_rects: Array = []
-			for s in 3:
+			for st in 3:
 				var tr := TextureRect.new()
 				tr.texture = T.ui_star_empty
 				tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -621,6 +689,24 @@ func _build_level_select() -> void:
 			lock.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			b.add_child(lock)
 			level_tiles.append({"button": b, "stars": st_rects, "lock": lock})
+	btn_page_prev = _button("‹", func() -> void: _set_page(level_page - 1), false, 90, 64, 34)
+	btn_page_prev.position = Vector2(150, 1052)
+	c.add_child(btn_page_prev)
+	btn_page_next = _button("›", func() -> void: _set_page(level_page + 1), false, 90, 64, 34)
+	btn_page_next.position = Vector2(480, 1052)
+	c.add_child(btn_page_next)
+
+
+func _page_count() -> int:
+	return int(ceil(Levels.WORLDS.size() / 3.0))
+
+
+func _set_page(p: int) -> void:
+	level_page = clampi(p, 0, _page_count() - 1)
+	for w in page_rows.size():
+		page_rows[w].visible = w / 3 == level_page
+	btn_page_prev.disabled = level_page == 0
+	btn_page_next.disabled = level_page == _page_count() - 1
 
 
 func _tile_style(col: Color, pressed := false) -> StyleBoxFlat:
@@ -837,6 +923,14 @@ func _tip_icon(tip: String) -> Texture2D:
 		"boss": return T.ent_boss
 		"trap": return T.bouncer_puff
 		"stone": return T.ui_lock
+		"hold": return T.zi_hold
+		"shrine": return T.zi_swift
+		"curl": return T.zi_straight
+		"arcs": return T.zi_arc
+		"curse": return T.zi_slow
+		"idol": return T.ent_idol_scary
+		"idols": return T.ent_idol_cute
+		"elite": return T.ent_crown
 	return T.ui_star
 
 
@@ -844,6 +938,8 @@ func begin_play() -> void:
 	mode = "level"
 	_load_layout(level)
 	_spawn_level_entities(level)
+	_build_zones(level)
+	level["_targets"] = targets_left()
 	goal_min = level.goal[0]
 	goal_max = level.goal[1]
 	werecat.set_target(scary_percent() / 100.0)
@@ -949,6 +1045,7 @@ func _end(won: bool) -> void:
 
 func _load_layout(lv: Dictionary) -> void:
 	_clear_entities()
+	zones.clear()
 	if trail_line:
 		_clear_stroke()
 	var built := Levels.build(lv, GW, GH)
@@ -1104,9 +1201,21 @@ func move_stroke(p: Vector2) -> void:
 			trail_line.points = PackedVector2Array([last_origin_pt])
 			trail_line.modulate.a = 0.45
 			_style_trail()
-			_extend_trail(p)
+			curl_mode = effective_curl()
+			if curl_mode == "true":
+				_extend_trail(p)
+			else:
+				tip = last_origin_pt
+				ray_anchor = last_origin_pt
+				tip_heading = (p - last_origin_pt).angle()
+				tip_len = 0.0
+				last_finger = last_origin_pt
+				_chase(p)
 		elif inside and type_at(p) == stroke_origin:
 			last_origin_pt = p
+		return
+	if curl_mode != "true":
+		_chase(p)
 		return
 	var q := Vector2(clampf(p.x, 0.0, FIELD_SIZE.x - 0.01), clampf(p.y, 0.0, FIELD_SIZE.y - 0.01))
 	if q.distance_to(stroke_points[stroke_points.size() - 1]) < 3.0 and inside and not near_edge:
@@ -1115,6 +1224,51 @@ func move_stroke(p: Vector2) -> void:
 	var t := type_at(q)
 	if not inside or near_edge or t == stroke_origin or t == STONE:
 		start_growth()
+
+
+## Curl modes: the tip of the line follows the finger but can only turn so
+## fast. Straight: the line is a ray from where it entered enemy ground; the
+## finger pushes it forward. Returns after closing (growth starts).
+func _chase(finger: Vector2) -> void:
+	var step := 4.0
+	if curl_mode == "straight":
+		var dir := Vector2.from_angle(tip_heading)
+		var want := maxf(tip_len, (finger - ray_anchor).dot(dir))
+		while tip_len + step <= want:
+			tip_len += step
+			tip = ray_anchor + dir * tip_len
+			if _tip_step():
+				return
+	else:
+		var rate := deg_to_rad(float(CURL_RATE[curl_mode]))
+		var budget := finger.distance_to(last_finger)
+		while budget > 0.0:
+			var to := finger - tip
+			if to.length() < step:
+				break
+			var dh := wrapf(to.angle() - tip_heading, -PI, PI)
+			tip_heading += clampf(dh, -rate * step, rate * step)
+			tip += Vector2.from_angle(tip_heading) * step
+			budget -= step
+			if _tip_step():
+				return
+	last_finger = finger
+	leash.points = PackedVector2Array([tip, finger])
+
+
+## Lays the next bit of line at the tip; starts growth if the tip closed.
+func _tip_step() -> bool:
+	var q := Vector2(clampf(tip.x, 0.0, FIELD_SIZE.x - 0.01), clampf(tip.y, 0.0, FIELD_SIZE.y - 0.01))
+	var e := CELL * 1.5
+	var out := not in_field(tip) or tip.x < e or tip.y < e or tip.x > FIELD_SIZE.x - e or tip.y > FIELD_SIZE.y - e
+	if q.distance_to(stroke_points[stroke_points.size() - 1]) >= 3.0 or out:
+		_extend_trail(q)
+	var t := type_at(q)
+	if out or t == stroke_origin or t == STONE:
+		leash.clear_points()
+		start_growth()
+		return true
+	return false
 
 
 ## Lifting before the path closes just cancels the blueprint. Free.
@@ -1148,6 +1302,7 @@ func _clear_stroke() -> void:
 	live_list.clear()
 	if trail_line:
 		trail_line.clear_points()
+		leash.clear_points()
 		grow_line_a.clear_points()
 		grow_line_b.clear_points()
 		front_a.visible = false
@@ -1279,7 +1434,7 @@ func _grow_range(d0: float, d1: float) -> void:
 func step_growth(delta: float) -> void:
 	if not growing:
 		return
-	var adv := GROW_SPEED * delta
+	var adv := GROW_SPEED * wall_mult() * delta
 	var na := grow_a + adv
 	var nb := grow_b - adv
 	if na >= nb:
@@ -1365,7 +1520,7 @@ func _after_territory_change(bomb_before: Dictionary, color: int) -> void:
 
 func _check_deaths() -> void:
 	for it in items:
-		if it.alive and it.kind in ["nest", "seed"] and type_at(it.pos) == 1 - int(it.side):
+		if it.alive and it.kind in ["nest", "seed", "idol"] and type_at(it.pos) == 1 - int(it.side):
 			_kill_item(it)
 	for b in bouncers.duplicate():
 		if b.kind == "carver" and type_at(b.pos) == 1 - int(b.side):
@@ -1392,13 +1547,14 @@ func _flip_empty_pockets(color: int, seeds: PackedInt32Array) -> int:
 		if i < GW * (GH - 1): near[i + GW] = 1
 	var occ := {}
 	for b in bouncers:
-		if b.side == invaded and b.kind in ["basic", "stalker", "boss"]:
+		if b.side == invaded and b.kind in ["basic", "stalker", "boss", "elite"]:
 			var ci := cell_index(b.pos)
 			if not occ.has(ci):
 				occ[ci] = []
 			occ[ci].append(b)
 	var capture_cells := int(claimable * CAPTURE_FRAC)
 	var flipped := 0
+	var to_flip: Array = []
 	for start in GW * GH:
 		if seen[start] == 1 or mask[start] != invaded:
 			continue
@@ -1430,12 +1586,37 @@ func _flip_empty_pockets(color: int, seeds: PackedInt32Array) -> int:
 				stack.append(i + GW)
 		if not touches:
 			continue
-		if inside.is_empty() or pocket.size() < capture_cells:
-			for b in inside:
-				_capture(b)
-			for i in pocket:
-				_set_cell(i, color)
-			flipped += pocket.size()
+		var limit := capture_cells
+		for b in inside:
+			limit = maxi(limit, int(claimable * float(CAPTURE_FRAC_BY_KIND.get(b.kind, CAPTURE_FRAC))))
+		if inside.is_empty() or pocket.size() < limit:
+			to_flip.append({"cells": pocket, "inside": inside})
+	# A color can never be wiped out: if these flips would take all of the
+	# invaded color's ground, its largest pocket survives as a foothold (any
+	# creatures in it can still be trapped).
+	var remaining := 0
+	for i in GW * GH:
+		if mask[i] == invaded:
+			remaining += 1
+	var total_flip := 0
+	for pk in to_flip:
+		total_flip += pk.cells.size()
+	var keep := -1
+	if not to_flip.is_empty() and total_flip >= remaining:
+		var biggest := 0
+		for k in to_flip.size():
+			if to_flip[k].cells.size() > biggest:
+				biggest = to_flip[k].cells.size()
+				keep = k
+	for k in to_flip.size():
+		var pk: Dictionary = to_flip[k]
+		for bb in pk.inside:
+			_capture(bb)
+		if k == keep:
+			continue
+		for i in pk.cells:
+			_set_cell(i, color)
+		flipped += pk.cells.size()
 	return flipped
 
 
@@ -1538,16 +1719,25 @@ func _spawn_bouncer(kind: String, side: int, speed := 1.0, at: Variant = null) -
 			tex = T.ent_boss
 			sc = 0.72
 			r = 30.0
+		"elite":
+			sc = 0.85 if side == CUTE else 1.05
+			r = 21.0
 	var anywhere := kind in ["wisp", "carver"]
 	var p: Variant = at if at != null else _free_spot(side, r, anywhere)
 	if p == null:
 		return false
 	var ang := rng.randf_range(0.35, 1.22) + PI / 2.0 * rng.randi_range(0, 3)
-	var spd: float = BOUNCER_SPEED * speed * {"basic": 1.0, "stalker": 1.05, "wisp": 0.65, "carver": 0.62, "boss": 0.85}[kind]
+	var spd: float = BOUNCER_SPEED * speed * {"basic": 1.0, "stalker": 1.05, "wisp": 0.65, "carver": 0.62, "boss": 0.85, "elite": 0.75}[kind]
 	var s := Sprite2D.new()
 	s.texture = tex
 	s.scale = Vector2.ONE * sc
-	if side == SCARY and kind in ["basic", "stalker", "boss"]:
+	if kind == "elite":
+		var cr := Sprite2D.new()
+		cr.texture = T.ent_crown
+		cr.position = Vector2(0, -38 if side == CUTE else -22)
+		cr.scale = Vector2.ONE * (0.6 / sc)
+		s.add_child(cr)
+	if side == SCARY and kind in ["basic", "stalker", "boss", "elite"]:
 		var glow := Sprite2D.new()
 		glow.texture = T.fx_glow
 		glow.scale = Vector2.ONE * (1.5 if kind != "boss" else 3.0)
@@ -1600,6 +1790,9 @@ func _spawn_item(kind: String, side: int, at: Vector2) -> void:
 		"seed":
 			tex = T.ent_seed_cute if side == CUTE else T.ent_seed_scary
 			sc = 0.6
+		"idol":
+			tex = T.ent_idol_cute if side == CUTE else T.ent_idol_scary
+			sc = 0.66
 	var s := Sprite2D.new()
 	s.texture = tex
 	s.scale = Vector2.ONE * sc
@@ -1612,8 +1805,8 @@ func _spawn_item(kind: String, side: int, at: Vector2) -> void:
 		"fuse": 0.0, "color": 0, "alive": true, "base_scale": sc, "phase": rng.randf() * TAU}
 	items.append(it)
 	# nests and seeds claim a little ground under themselves
-	if kind in ["nest", "seed"]:
-		paint_disc(at, 6.0, side)
+	if kind in ["nest", "seed", "idol"]:
+		paint_disc(at, 7.0 if kind == "idol" else 6.0, side)
 		_upload_mask(false)
 		_recount()
 
@@ -1717,6 +1910,7 @@ func _process(delta: float) -> void:
 	elif state == "levels":
 		werecat.set_target(0.0)
 	elif state == "play":
+		_update_zones()
 		freeze_t = maxf(0.0, freeze_t - delta)
 		step_growth(delta)
 		if state == "play":
@@ -1732,6 +1926,7 @@ func _process(delta: float) -> void:
 	field_mat.set_shader_parameter("freeze", clampf(freeze_t, 0.0, 1.0))
 	bm.set_shader_parameter("hold", hold / HOLD_TIME if mode == "level" and state == "play" else 0.0)
 	_animate_entities()
+	zone_layer.queue_redraw()
 	shake = maxf(0.0, shake - delta * 2.5)
 	world.position = stage_off + Vector2(rng.randf_range(-1, 1), rng.randf_range(-1, 1)) * 10.0 * shake * shake
 	_update_hud()
@@ -1740,6 +1935,7 @@ func _process(delta: float) -> void:
 
 
 func step_entities(delta: float) -> void:
+	delta *= creature_mult()
 	if freeze_t > 0.0:
 		# frozen bouncers still snap trails they sit on
 		for b in bouncers:
@@ -1901,7 +2097,7 @@ func _animate_entities() -> void:
 		var ph: float = b.phase + clock
 		var sc: float = b.base_scale
 		match b.kind:
-			"basic", "stalker":
+			"basic", "stalker", "elite":
 				if b.side == CUTE:
 					var sq := sin(ph * 7.0) * 0.05
 					n.scale = Vector2(sc + sq, sc - sq)
@@ -1961,6 +2157,9 @@ func _animate_entities() -> void:
 
 func step_goal(delta: float) -> void:
 	var s := scary_percent()
+	if not objectives_done():
+		hold = 0.0
+		return
 	if s >= goal_min - 0.0001 and s <= goal_max + 0.0001:
 		hold += delta
 		if hold >= HOLD_TIME:
@@ -1990,7 +2189,156 @@ func step_endless(delta: float) -> void:
 	since_claim += delta
 	var s := scary_percent()
 	if s >= goal_min and s <= goal_max:
-		score += 10.0 * delta * activity_factor()
+		score += 10.0 * delta * endless_rate()
+
+
+# ================================================================ zones + objectives
+
+func _build_zones(lv: Dictionary) -> void:
+	zones.clear()
+	for spec in lv.get("zones", []):
+		var c: Vector2 = spec.at * FIELD_SIZE
+		var r: float = float(spec.r) * FIELD_SIZE.x
+		var cells := PackedInt32Array()
+		var rc := r / CELL
+		var cx := int(c.x / CELL)
+		var cy := int(c.y / CELL)
+		for dy in range(-int(rc) - 1, int(rc) + 2):
+			for dx in range(-int(rc) - 1, int(rc) + 2):
+				var x := cx + dx
+				var y := cy + dy
+				if dx * dx + dy * dy <= rc * rc and x >= 0 and y >= 0 and x < GW and y < GH and mask[y * GW + x] != STONE:
+					cells.append(y * GW + x)
+		zones.append({"kind": spec.kind, "side": int(spec.side), "effect": spec.get("effect", ""),
+			"center": c, "r": r, "cells": cells, "frac": 0.0, "held": false})
+	_update_zones()
+
+
+## frac = share of the zone's ground in the zone's color; held at 60%.
+func _update_zones() -> void:
+	for z in zones:
+		var n := 0
+		for i in z.cells:
+			if mask[i] == z.side:
+				n += 1
+		z.frac = float(n) / maxf(1.0, z.cells.size())
+		z.held = z.frac >= ZONE_CONTROL
+
+
+func _active_effects() -> Array:
+	var out: Array = []
+	for z in zones:
+		if z.kind == "shrine" and z.held:
+			out.append(z.effect)
+	return out
+
+
+func base_curl() -> String:
+	return level.get("curl", "true")
+
+
+## Curses (more restrictive than the level's curl) win over blessings.
+func effective_curl() -> String:
+	var base := base_curl()
+	var bi := CURL_ORDER.find(base)
+	var curse := 99
+	var bless := -1
+	for e in _active_effects():
+		if EFFECTS[e].kind != "curl":
+			continue
+		var i := CURL_ORDER.find(EFFECTS[e].value)
+		if i < bi:
+			curse = mini(curse, i)
+		elif i > bi:
+			bless = maxi(bless, i)
+	if curse != 99:
+		return CURL_ORDER[curse]
+	if bless != -1:
+		return CURL_ORDER[bless]
+	return base
+
+
+func _mult(kind: String) -> float:
+	var m := 1.0
+	for e in _active_effects():
+		if EFFECTS[e].kind == kind:
+			m *= float(EFFECTS[e].value)
+	return m
+
+
+func wall_mult() -> float:
+	return _mult("wall")
+
+
+func creature_mult() -> float:
+	return _mult("creature")
+
+
+func targets_left() -> int:
+	var n := 0
+	for it in items:
+		if it.alive and it.kind == "idol":
+			n += 1
+	for b in bouncers:
+		if b.kind == "elite":
+			n += 1
+	return n
+
+
+func holds_left() -> int:
+	var n := 0
+	for z in zones:
+		if z.kind == "hold" and not z.held:
+			n += 1
+	return n
+
+
+func objectives_done() -> bool:
+	return targets_left() == 0 and holds_left() == 0
+
+
+func _draw_zones() -> void:
+	for z in zones:
+		var c: Vector2 = FIELD_POS + z.center
+		var r: float = z.r
+		var aligned := Color(1, 0.85, 0.95) if z.side == CUTE else Color(1, 0.42, 0.15)
+		var cur := type_at(z.center)
+		var fill := Color(1, 0.8, 0.92, 0.10) if z.frac >= 0.5 and z.side == CUTE or z.frac < 0.5 and z.side == SCARY else Color(1, 0.3, 0.1, 0.12)
+		zone_layer.draw_circle(c, r, fill)
+		# rotating dashed ring
+		var n := 28
+		var spin := clock * (0.25 if z.kind == "hold" else -0.25)
+		for k in n:
+			var a0 := spin + TAU * k / n
+			var a1 := a0 + TAU / n * 0.55
+			zone_layer.draw_arc(c, r, a0, a1, 6, INK, 8.0, true)
+			zone_layer.draw_arc(c, r, a0, a1, 6, aligned, 4.0, true)
+		# control meter: arc fills with the zone's color, gold when held
+		var arc_col := GOLD if z.held else aligned
+		zone_layer.draw_arc(c, r + 10.0, -PI / 2, -PI / 2 + TAU * z.frac, 48, INK, 9.0, true)
+		zone_layer.draw_arc(c, r + 10.0, -PI / 2, -PI / 2 + TAU * z.frac, 48, arc_col, 5.0, true)
+		# 60% notch
+		var na := -PI / 2 + TAU * ZONE_CONTROL
+		zone_layer.draw_line(c + Vector2.from_angle(na) * (r + 4), c + Vector2.from_angle(na) * (r + 16), INK, 4.0)
+		var icon: Texture2D = T.zi_hold if z.kind == "hold" else T[EFFECTS[z.effect].icon]
+		var isz := 58.0 + (6.0 * sin(clock * 3.0) if z.held else 0.0)
+		zone_layer.draw_texture_rect(icon, Rect2(c - Vector2(isz, isz) / 2.0, Vector2(isz, isz)), false,
+			Color(1, 1, 1, 1.0 if z.held else 0.75))
+	# reticles around must-destroy targets
+	for it in items:
+		if it.alive and it.kind == "idol":
+			_reticle(FIELD_POS + it.pos, 40.0)
+	for b in bouncers:
+		if b.kind == "elite":
+			_reticle(FIELD_POS + b.pos, 34.0)
+
+
+func _reticle(c: Vector2, r: float) -> void:
+	var rr := r + 4.0 * sin(clock * 5.0)
+	for k in 4:
+		var a := clock * 1.2 + k * PI / 2.0
+		zone_layer.draw_arc(c, rr, a - 0.35, a + 0.35, 8, INK, 8.0, true)
+		zone_layer.draw_arc(c, rr, a - 0.35, a + 0.35, 8, Color(1, 0.84, 0.35), 4.0, true)
 
 
 ## Endless anti-idle: points only flow while you're actively claiming.
@@ -2002,6 +2350,18 @@ const ACTIVE_FADE := 4.0
 
 func activity_factor() -> float:
 	return clampf(1.0 - (since_claim - ACTIVE_FULL) / ACTIVE_FADE, 0.0, 1.0)
+
+
+## The band is still drifting toward its next spot.
+func band_moving() -> bool:
+	return absf((goal_min + goal_max) / 2.0 - band_target) > 0.05
+
+
+## Scoring rate: full while the band has settled (sitting in a still band is
+## fair play); while it drifts, only recent claims count, so it can't wash
+## over an idle player and hand out points.
+func endless_rate() -> float:
+	return 1.0 if not band_moving() else activity_factor()
 
 
 const ENDLESS_FIRST_GAP := 20.0
@@ -2033,22 +2393,60 @@ func _update_hud() -> void:
 	if not hud.visible:
 		return
 	lbl_title.text = "ENDLESS" if mode == "endless" else "NIGHT %s" % level.id
+	lbl_status.text = _status_text()
+	lbl_obj.text = _objective_text()
 	for i in 3:
 		hearts[i].texture = T.ui_heart if i < lives else T.ui_heart_empty
 	if mode == "endless":
 		var n := endless_creature_count()
 		lbl_goal_head.text = "SCORE · %d CREATURE%s" % [n, "" if n == 1 else "S"]
-		var f := activity_factor()
+		var f := endless_rate()
 		lbl_idle.visible = f < 1.0
 		lbl_idle.modulate.a = 0.6 + 0.4 * absf(sin(clock * 4.0))
 		lbl_goal.modulate = Color(1, 1, 1, 0.45 + 0.55 * f)
 		lbl_goal.text = "%d" % roundi(score)
 	else:
-		lbl_idle.visible = false
+		var s_ := scary_percent()
+		var in_band := s_ >= goal_min and s_ <= goal_max
+		lbl_idle.visible = in_band and not objectives_done()
+		lbl_idle.text = "Destroy the targets first!" if targets_left() > 0 else "Hold the marked ground!"
+		lbl_idle.modulate.a = 0.6 + 0.4 * absf(sin(clock * 4.0))
 		lbl_goal.modulate = Color.WHITE
 		var gt := goal_text(goal_min, goal_max)
 		lbl_goal_head.text = gt[0]
 		lbl_goal.text = gt[1]
+
+
+func _status_text() -> String:
+	var parts: Array = []
+	var curl := effective_curl()
+	if curl != "true" or base_curl() != "true":
+		parts.append("Lines: %s" % CURL_NAMES[curl])
+	var wm := wall_mult()
+	if wm > 1.01:
+		parts.append("Walls: fast")
+	elif wm < 0.99:
+		parts.append("Walls: slow")
+	var cm := creature_mult()
+	if cm > 1.01:
+		parts.append("Creatures: fast")
+	elif cm < 0.99:
+		parts.append("Creatures: calm")
+	return " · ".join(parts)
+
+
+func _objective_text() -> String:
+	var parts: Array = []
+	var total_holds := 0
+	for z in zones:
+		if z.kind == "hold":
+			total_holds += 1
+	if total_holds > 0:
+		parts.append("Hold %d/%d" % [total_holds - holds_left(), total_holds])
+	var total_t := int(level.get("_targets", 0))
+	if total_t > 0:
+		parts.append("Targets %d/%d" % [total_t - targets_left(), total_t])
+	return " · ".join(parts)
 
 
 func _on_tier_changed(nt: int, old: int) -> void:

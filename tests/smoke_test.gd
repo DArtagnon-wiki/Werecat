@@ -64,6 +64,7 @@ func sim(seconds: float, items := true) -> void:
 	for i in int(seconds * 60):
 		g.clock += dt
 		g.freeze_t = maxf(0.0, g.freeze_t - dt)
+		g._update_zones()
 		g.step_growth(dt)
 		g.step_entities(dt)
 		if items:
@@ -138,6 +139,13 @@ func run() -> void:
 	check(g.type_at(Vector2(600, 700)) == far_before and g.type_at(Vector2(40, 700)) == far2_before,
 		"empty pockets that don't touch the new wall are left alone")
 	check(g.type_at(Vector2(240, 120)) == start_type, "the pocket the wall cut off does flip")
+
+	# A color can never be wiped out: with no puffs, a line that splits the
+	# Cute side would flip both halves; the bigger half survives instead.
+	setup()
+	draw([Vector2(200, 600), Vector2(200, -10)])
+	grow_out()
+	check(g.scary_percent() < 99.0 and g.scary_percent() > 55.0, "the last ground of a color survives as a foothold (%.1f%% Scary)" % g.scary_percent())
 
 	# ---------------------------------------------------------------- trapping
 	setup()
@@ -248,6 +256,75 @@ func run() -> void:
 	check(hunter.vel.normalized().dot((head - hunter.pos).normalized()) > 0.5, "hunters steer toward a growing end")
 	g._clear_stroke()
 
+	# ---------------------------------------------------------------- line curl
+	setup({"curl": "straight"})
+	g.begin_stroke(Vector2(300, 200))
+	var wig := []
+	for k in 60:
+		wig.append(Vector2(300 + 60 * sin(k * 0.4), 200 + k * 5))
+	draw_more([Vector2(300, 200)] + wig)
+	var pts: PackedVector2Array = g.stroke_points
+	var a0: Vector2 = pts[0]
+	var dirv: Vector2 = (pts[pts.size() - 1] - a0).normalized()
+	var dev := 0.0
+	for q in pts:
+		dev = maxf(dev, absf((q - a0).cross(dirv)))
+	check(pts.size() > 5 and dev < 4.0, "straight curl: a wiggly finger still makes a straight line (max deviation %.1f px)" % dev)
+	g._clear_stroke()
+
+	setup({"curl": "arc"})
+	g.begin_stroke(Vector2(300, 300))
+	draw_more([Vector2(300, 300), Vector2(300, 470), Vector2(560, 470)])   # hard 90° turn
+	pts = g.stroke_points
+	var max_turn := 0.0
+	for k in range(2, pts.size()):
+		var h0: float = (pts[k - 1] - pts[k - 2]).angle()
+		var h1: float = (pts[k] - pts[k - 1]).angle()
+		var seg: float = pts[k].distance_to(pts[k - 1])
+		if seg > 2.0:
+			max_turn = maxf(max_turn, absf(wrapf(h1 - h0, -PI, PI)) / seg)
+	check(max_turn < deg_to_rad(0.35) * 1.6, "arc curl: the line can't turn sharper than the limit (%.2f deg/px)" % rad_to_deg(max_turn))
+	g._clear_stroke()
+
+	# ---------------------------------------------------------------- zones
+	setup({"zones": [{"kind": "hold", "side": 1, "at": Vector2(0.5, 0.25), "r": 0.12}]})
+	check(g.holds_left() == 1 and not g.objectives_done(), "an unheld hold-zone blocks the win")
+	var s_now: float = g.scary_percent()
+	g.goal_min = s_now - 50.0
+	g.goal_max = s_now + 50.0
+	for i in 200:
+		g.step_goal(1.0 / 60.0)
+	check(g.state == "play" and g.hold == 0.0, "being in the band isn't enough while objectives remain")
+	g.paint_disc(Vector2(320, 186), 22, g.SCARY)
+	g._update_zones()
+	check(g.holds_left() == 0 and g.objectives_done(), "filling the zone with its color holds it")
+
+	setup({"zones": [{"kind": "shrine", "side": 0, "at": Vector2(0.5, 0.75), "r": 0.12, "effect": "swift"},
+		{"kind": "shrine", "side": 1, "at": Vector2(0.5, 0.25), "r": 0.12, "effect": "straight"},
+		{"kind": "shrine", "side": 0, "at": Vector2(0.2, 0.75), "r": 0.1, "effect": "true"}]})
+	check(is_equal_approx(g.wall_mult(), 1.0) and g.effective_curl() == "true", "unheld shrines do nothing")
+	g.paint_disc(Vector2(320, 558), 22, g.CUTE)
+	g.paint_disc(Vector2(320, 186), 22, g.SCARY)
+	g.paint_disc(Vector2(128, 558), 18, g.CUTE)
+	g._update_zones()
+	check(is_equal_approx(g.wall_mult(), 1.7), "a held swift shrine speeds walls up")
+	check(g.effective_curl() == "straight", "a curse shrine beats a blessing (curl straight)")
+
+	# ---------------------------------------------------------------- targets
+	setup({"items": [{"kind": "idol", "side": 1, "at": Vector2(0.5, 0.85)}]})
+	check(g.targets_left() == 1 and not g.objectives_done(), "a living idol blocks the win")
+	g.paint_disc(Vector2(320, 632), 12, g.CUTE)
+	g._check_deaths()
+	check(g.targets_left() == 0, "claiming an idol's ground destroys it")
+
+	setup()
+	var el := add_b("elite", g.CUTE, Vector2(40, 325))
+	add_b("basic", g.CUTE, Vector2(450, 120))
+	check(g.targets_left() == 1, "a crowned creature counts as a target")
+	draw([Vector2(92, 500), Vector2(92, 282), Vector2(-10, 282)])
+	grow_out()
+	check(not g.bouncers.has(el) and g.targets_left() == 0, "trapping the crowned creature clears the target")
+
 	# ---------------------------------------------------------------- all levels
 	var lv_ok := true
 	for i in g.levels.size():
@@ -279,7 +356,7 @@ func run() -> void:
 					lv_ok = false
 		print("  level %s %-16s start %4.1f%%  goal %d-%d  bouncers %d" % [lv.id, lv.name, s0, lv.goal[0], lv.goal[1], want])
 	check(lv_ok, "all %d levels load, spawn everything, don't start solved, and simulate cleanly" % g.levels.size())
-	check(g.levels.size() == 20, "there are 20 levels")
+	check(g.levels.size() == 30, "there are 30 levels")
 
 	# ---------------------------------------------------------------- save
 	g.stars.fill(0)
@@ -303,34 +380,47 @@ func run() -> void:
 		g.step_endless(1.0 / 60.0)
 	check(g.score > 0.0, "endless scores while inside the band")
 
-	# Anti-idle: sitting in the band without claiming stops scoring
+	# Anti-idle: a drifting band can't hand points to an idle player...
 	g.start_endless()
 	for b in g.bouncers.duplicate():
 		g._capture(b)
 	g.next_spawn = 1e9
 	g.next_item = 1e9
 	g.next_shift = 1e9
-	var idle_start: float = g.score
-	for i in 60 * 40:
+	g.since_claim = 100.0
+	var cur: float = g.scary_percent()
+	g.goal_min = cur - 40.0
+	g.goal_max = cur - 24.0
+	g.band_target = cur + 40.0   # it will drift right through the current %
+	var drift_gain := 0.0
+	for i in 60 * 20:
 		g.clock += 1.0 / 60.0
-		var s0: float = g.scary_percent()
-		g.band_target = s0
-		g.goal_min = s0 - 8.0
-		g.goal_max = s0 + 8.0
+		var before_s: float = g.score
 		g.step_endless(1.0 / 60.0)
-	var idle_gain: float = g.score - idle_start
-	check(idle_gain < 10.0 * (g.ACTIVE_FULL + g.ACTIVE_FADE) + 1.0, "idling in the band stops scoring (%.0f pts in 40 s)" % idle_gain)
+		drift_gain += g.score - before_s
+	check(drift_gain < 1.0, "an idle player gets nothing while the band drifts over them (%.1f pts)" % drift_gain)
+	# ...but sitting idle inside a band that has settled scores normally
+	cur = g.scary_percent()
+	g.band_target = cur
+	g.goal_min = cur - 8.0
+	g.goal_max = cur + 8.0
+	var still_start: float = g.score
+	for i in 60 * 10:
+		g.clock += 1.0 / 60.0
+		g.step_endless(1.0 / 60.0)
+	check(g.score - still_start > 95.0, "idling inside a settled band scores normally (%.0f pts in 10 s)" % (g.score - still_start))
+	# claiming during a drift turns scoring on
+	g.band_target = cur + 30.0
 	draw([Vector2(100, 600), Vector2(100, -10)])
 	grow_out()
-	var after_claim: float = g.score
-	for i in 60 * 3:
+	var claim_start: float = g.score
+	for i in 60 * 2:
 		g.clock += 1.0 / 60.0
 		var s1: float = g.scary_percent()
 		g.goal_min = s1 - 8.0
 		g.goal_max = s1 + 8.0
-		g.band_target = s1
 		g.step_endless(1.0 / 60.0)
-	check(g.score - after_claim > 25.0, "finishing a wall turns scoring back on")
+	check(g.score - claim_start > 15.0, "recent claims score even while the band drifts")
 
 	# Endless keeps adding creatures without a cap (wisps capped at 2)
 	g.start_endless()

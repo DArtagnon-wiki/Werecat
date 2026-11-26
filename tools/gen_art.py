@@ -797,6 +797,91 @@ def entities():
     ui_icons()
 
 
+# ------------------------------------------------------------------ zones, idols, crown
+
+def _icon(name, body, defs="", size=96):
+    render(name, body, defs, size, size)
+
+
+def zone_icons():
+    ring = f'<circle cx="48" cy="48" r="40" fill="#2A1430" stroke="{INK}" stroke-width="5"/>'
+    hl = '<ellipse cx="36" cy="30" rx="12" ry="6" fill="#FFFFFF" opacity="0.18" transform="rotate(-30 36 30)"/>'
+    W_ = "#FFF4FA"
+    # hold: a banner flag
+    _icon("zi_hold", ring + f'<path d="M 34 24 L 34 74" stroke="{W_}" stroke-width="6" stroke-linecap="round"/>'
+          f'<path d="M 36 26 C 50 20, 58 34, 70 28 L 70 52 C 58 58, 50 44, 36 50 Z" fill="#FFD25A" stroke="{INK}" stroke-width="3.5" stroke-linejoin="round"/>' + hl)
+    # swift: double chevron
+    _icon("zi_swift", ring + f'<path d="M 26 32 L 42 48 L 26 64 M 46 32 L 62 48 L 46 64" fill="none" stroke="#9FF0FF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>'
+          f'<path d="M 66 34 L 74 48 L 66 62" fill="none" stroke="#9FF0FF" stroke-width="5" stroke-linecap="round" opacity="0.6"/>' + hl)
+    # sluggish: snail
+    _icon("zi_slow", ring + f'<path d="M 20 66 C 20 58, 30 58, 40 58 L 74 58 C 78 58, 78 66, 72 66 Z" fill="#9AD06A" stroke="{INK}" stroke-width="3.5" stroke-linejoin="round"/>'
+          f'<path d="M 26 60 C 24 50, 28 42, 30 40 M 30 40 L 27 32 M 30 40 L 35 33" fill="none" stroke="{INK}" stroke-width="3" stroke-linecap="round"/>'
+          f'<circle cx="27" cy="31" r="2.5" fill="{INK}"/><circle cx="36" cy="32" r="2.5" fill="{INK}"/>'
+          f'<circle cx="54" cy="44" r="16" fill="#E8B070" stroke="{INK}" stroke-width="3.5"/>'
+          f'<path d="M 54 44 m 0 -6 a 6 6 0 1 1 -6 6 a 11 11 0 1 1 11 11" fill="none" stroke="{INK}" stroke-width="3" stroke-linecap="round"/>' + hl)
+    # straight: ruler arrow
+    _icon("zi_straight", ring + f'<path d="M 22 62 L 66 30" stroke="{W_}" stroke-width="7" stroke-linecap="round"/>'
+          f'<path d="M 54 28 L 70 27 L 68 43" fill="none" stroke="{W_}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>' + hl)
+    # arc: curved arrow
+    _icon("zi_arc", ring + f'<path d="M 24 64 C 26 34, 50 24, 68 32" fill="none" stroke="{W_}" stroke-width="7" stroke-linecap="round"/>'
+          f'<path d="M 58 24 L 70 32 L 60 42" fill="none" stroke="{W_}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>' + hl)
+    # curly: spiral
+    pts = []
+    for k in range(0, 200):
+        t = k / 199 * 3.2 * math.pi * 2 / 2
+        r = 2 + t * 3.4
+        pts.append(f"{48 + math.cos(t) * r:.1f},{48 + math.sin(t) * r:.1f}")
+    _icon("zi_curly", ring + f'<polyline points="{" ".join(pts)}" fill="none" stroke="{W_}" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>' + hl)
+    # true: quill
+    _icon("zi_true", ring + f'<path d="M 66 22 C 44 30, 32 48, 28 70 C 40 56, 54 50, 70 26 Z" fill="#FFF4FA" stroke="{INK}" stroke-width="3.5" stroke-linejoin="round"/>'
+          f'<path d="M 28 70 L 24 76" stroke="{W_}" stroke-width="4" stroke-linecap="round"/><path d="M 34 60 L 60 32" stroke="#C8B0F0" stroke-width="2.5"/>' + hl)
+    # haste: lightning
+    _icon("zi_haste", ring + f'<path d="M 54 18 L 30 52 L 46 52 L 40 78 L 66 42 L 50 42 Z" fill="#FF6A3A" stroke="{INK}" stroke-width="3.5" stroke-linejoin="round"/>' + hl)
+    # calm: sleepy moon
+    _icon("zi_calm", ring + f'<path d="M 56 24 A 24 24 0 1 0 64 64 A 18 18 0 1 1 56 24 Z" fill="#CFEFFF" stroke="{INK}" stroke-width="3.5" stroke-linejoin="round"/>'
+          f'<path d="M 58 30 L 68 30 L 58 40 L 68 40" fill="none" stroke="{W_}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>' + hl)
+
+
+def idols():
+    defs = blur_filter("ig", 8)
+    # cute: candy-heart idol on a striped pedestal
+    defs_c = defs + radial("ih", [(0, "#FFFFFF", 1), (0.45, "#FF9DBA", 1), (1, "#D9406E", 1)], cx="38%", cy="32%", r="70%")
+    defs_c += linear("ip", [(0, "#C9F2FF", 1), (1, "#8FC8F0", 1)])
+    heart = "M 60 70 C 30 50, 26 30, 36 20 C 46 10, 58 16, 60 26 C 62 16, 74 10, 84 20 C 94 30, 90 50, 60 70 Z"
+    b = f'<ellipse cx="60" cy="58" rx="40" ry="38" fill="#FFB3E0" opacity="0.55" filter="url(#ig)"/>'
+    b += f'<path d="M 38 76 L 82 76 L 78 104 L 42 104 Z" fill="url(#ip)" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>'
+    for x in (48, 60, 72):
+        b += f'<path d="M {x} 78 L {x - 4} 102" stroke="#FFFFFF" stroke-width="4" opacity="0.7"/>'
+    b += f'<rect x="32" y="70" width="56" height="10" rx="4" fill="#FF9DBA" stroke="{INK}" stroke-width="4"/>'
+    b += f'<path d="{heart}" fill="url(#ih)" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>'
+    b += '<ellipse cx="46" cy="30" rx="7" ry="4.5" fill="#FFFFFF" opacity="0.8" transform="rotate(-35 46 30)"/>'
+    b += f'<circle cx="52" cy="42" r="3.5" fill="{INK}"/><circle cx="68" cy="42" r="3.5" fill="{INK}"/><path d="M 55 50 Q 60 54 65 50" fill="none" stroke="{INK}" stroke-width="2.5" stroke-linecap="round"/>'
+    render("ent_idol_cute", b, defs_c, 120, 120)
+    # scary: horned bone lantern totem with glowing eyes
+    defs_s = defs + radial("is", [(0, "#F4EAD0", 1), (1, "#B8A888", 1)], cx="40%", cy="30%", r="70%")
+    defs_s += linear("ipd", [(0, "#3A2A36", 1), (1, "#140A12", 1)])
+    b = f'<ellipse cx="60" cy="56" rx="40" ry="40" fill="#FF3A1A" opacity="0.5" filter="url(#ig)"/>'
+    b += f'<path d="M 36 78 L 84 78 L 80 106 L 40 106 Z" fill="url(#ipd)" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>'
+    b += f'<path d="M 46 84 L 74 84 M 48 94 L 72 94" stroke="{EMBER}" stroke-width="2.5" opacity="0.7"/>'
+    b += f'<path d="M 40 36 C 30 26, 26 14, 30 6 C 36 16, 42 22, 48 26 Z M 80 36 C 90 26, 94 14, 90 6 C 84 16, 78 22, 72 26 Z" fill="#2A1A20" stroke="{INK}" stroke-width="3.5" stroke-linejoin="round"/>'
+    b += f'<path d="M 38 46 C 38 24, 82 24, 82 46 C 82 60, 74 70, 70 76 L 50 76 C 46 70, 38 60, 38 46 Z" fill="url(#is)" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>'
+    b += f'<circle cx="50" cy="48" r="9" fill="#FF3A1A" opacity="0.6" filter="url(#ig)"/><circle cx="70" cy="48" r="9" fill="#FF3A1A" opacity="0.6" filter="url(#ig)"/>'
+    b += f'<path d="M 42 46 L 56 50 L 54 56 L 44 54 Z M 78 46 L 64 50 L 66 56 L 76 54 Z" fill="#1A0408"/>'
+    b += '<circle cx="50" cy="51" r="2.6" fill="#FFC04A"/><circle cx="70" cy="51" r="2.6" fill="#FFC04A"/>'
+    b += f'<path d="M 56 62 L 60 58 L 64 62 Z" fill="#1A0408"/><path d="M 50 70 L 53 66 L 56 70 L 60 66 L 64 70 L 67 66 L 70 70" fill="none" stroke="#1A0408" stroke-width="2.5"/>'
+    render("ent_idol_scary", b, defs_s, 120, 120)
+
+
+def crown():
+    defs = linear("cg", [(0, "#FFF6C0", 1), (0.5, "#FFD25A", 1), (1, "#E09A20", 1)])
+    d = "M 8 40 L 6 14 L 20 26 L 32 6 L 44 26 L 58 14 L 56 40 Z"
+    b = f'<path d="{d}" fill="url(#cg)" stroke="{INK}" stroke-width="4" stroke-linejoin="round"/>'
+    b += f'<rect x="7" y="36" width="50" height="9" rx="3" fill="#E09A20" stroke="{INK}" stroke-width="3.5"/>'
+    b += f'<circle cx="32" cy="30" r="4.5" fill="#E0204E" stroke="{INK}" stroke-width="2"/><circle cx="18" cy="33" r="3" fill="#7FD3F0" stroke="{INK}" stroke-width="1.5"/><circle cx="46" cy="33" r="3" fill="#7FD3F0" stroke="{INK}" stroke-width="1.5"/>'
+    b += '<ellipse cx="22" cy="20" rx="3" ry="1.8" fill="#FFFFFF" opacity="0.8"/>'
+    render("ent_crown", b, defs, 64, 50)
+
+
 # ------------------------------------------------------------------ main
 
 LAYERS = {
@@ -837,4 +922,7 @@ if __name__ == "__main__":
     ember("fx_ember")
     soft_glow("fx_glow")
     entities()
+    zone_icons()
+    idols()
+    crown()
     print("ok", len(LAYERS) + len(ARM_PIVOTS) + 6, "sprites")
