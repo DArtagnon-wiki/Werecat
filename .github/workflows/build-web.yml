@@ -64,6 +64,8 @@ jobs:
           mkdir -p build/web
           ~/godot/godot --headless --path . --export-release "Web" build/web/index.html
           test -f build/web/index.wasm
+          # Retire the old offline service worker on phones that still have it
+          cp web/index.service.worker.js build/web/
 
       - name: Browser soak test (no crash, no memory runaway)
         timeout-minutes: 5
