@@ -250,6 +250,7 @@ func _ready() -> void:
 			"ent_seed_scary", "ent_seed_cute", "ent_grub_head", "ent_grub_seg", "ent_slug_head", "ent_slug_seg",
 			"ui_star", "ui_star_empty", "ui_lock", "ui_pause", "ent_idol_cute", "ent_idol_scary", "ent_crown",
 			"ent_den_scary", "ent_den_cute", "ent_burrow_scary", "ent_burrow_cute", "ent_lantern",
+			"ui_zone_ring", "ui_reticle", "ui_lone_ring",
 			"zi_hold", "zi_swift", "zi_slow", "zi_straight", "zi_arc", "zi_curly", "zi_true", "zi_haste", "zi_calm"]:
 		T[n] = load("res://assets/sprites/%s.png" % n)
 	font_ui = _font("res://assets/fonts/Fredoka.ttf", 500)
@@ -457,7 +458,7 @@ func _apply_gfx(tier: int) -> void:
 	auto_frames = 0
 	_layout()
 	_refresh_gfx_buttons()
-	print("[gfx] tier=%s choice=%s" % [GFX_NAMES[tier], _gfx_choice()])
+	print("[gfx] tier=%s choice=%s build=%s" % [GFX_NAMES[tier], _gfx_choice(), BuildInfo.ID])
 
 
 ## High draws at the screen's native resolution. Medium and Lite draw at the
@@ -595,7 +596,7 @@ func _perf_tick(delta: float) -> void:
 		return
 	var vis_w := get_viewport().get_visible_rect().size.x
 	if perf_collapsed:
-		perf_label.text = "%.0f fps · %.0f ms · %s%s · tap" % [fps, avg, GFX_NAMES[gfx_tier], " (auto)" if _gfx_choice() == "auto" else ""]
+		perf_label.text = "%.0f fps · %.0f ms · %s%s · v %s" % [fps, avg, GFX_NAMES[gfx_tier], " (auto)" if _gfx_choice() == "auto" else "", BuildInfo.ID.get_slice(" ", 0)]
 		perf_panel.reset_size()
 		perf_panel.position = Vector2((vis_w - perf_panel.size.x) / 2.0, 4)
 		return
@@ -617,7 +618,7 @@ func _perf_tick(delta: float) -> void:
 		lines.append(device_info)
 	for e in auto_log.slice(-2):
 		lines.append("auto: " + e)
-	lines.append("tap to shrink")
+	lines.append("build %s · tap to shrink" % BuildInfo.ID)
 	perf_label.text = "\n".join(lines)
 	perf_panel.reset_size()
 	perf_panel.position = Vector2((vis_w - perf_panel.size.x) / 2.0, 4)
@@ -2526,7 +2527,7 @@ func _process(delta: float) -> void:
 		_sent_hold = hv
 		bm.set_shader_parameter("hold", hv)
 	_timed("anim", _animate_entities)
-	zone_layer.queue_redraw()
+	_update_zone_sprites()
 	shake = maxf(0.0, shake - delta * 2.5)
 	world.position = stage_off + Vector2(rng.randf_range(-1, 1), rng.randf_range(-1, 1)) * 10.0 * shake * shake
 	_timed("hud", _update_hud)
@@ -2807,7 +2808,12 @@ func step_endless(delta: float) -> void:
 # ================================================================ zones + objectives
 
 func _build_zones(lv: Dictionary) -> void:
+	for z in zones:
+		for k in ["ring_node", "icon_node"]:
+			if z.has(k) and is_instance_valid(z[k]):
+				z[k].queue_free()
 	zones.clear()
+	_zone_sig = ""
 	for spec in lv.get("zones", []):
 		var c: Vector2 = spec.at * FIELD_SIZE
 		var r: float = float(spec.r) * FIELD_SIZE.x
@@ -2821,8 +2827,23 @@ func _build_zones(lv: Dictionary) -> void:
 				var y := cy + dy
 				if dx * dx + dy * dy <= rc * rc and x >= 0 and y >= 0 and x < GW and y < GH and mask[y * GW + x] != STONE:
 					cells.append(y * GW + x)
-		zones.append({"kind": spec.kind, "side": int(spec.side), "effect": spec.get("effect", ""),
-			"center": c, "r": r, "cells": cells, "frac": 0.0, "held": false})
+		var z := {"kind": spec.kind, "side": int(spec.side), "effect": spec.get("effect", ""),
+			"center": c, "r": r, "cells": cells, "frac": 0.0, "held": false}
+		# animated parts are sprites (rotated/pulsed each frame); the rest is
+		# drawn only when the zone's control changes
+		var ring := Sprite2D.new()
+		ring.texture = T.ui_zone_ring
+		ring.position = FIELD_POS + c
+		ring.scale = Vector2.ONE * (r / 100.0)
+		ring.modulate = Color(1, 0.42, 0.74) if z.side == CUTE else Color(1, 0.42, 0.12)
+		zone_layer.add_child(ring)
+		var icon := Sprite2D.new()
+		icon.texture = T.zi_hold if z.kind == "hold" else T[EFFECTS[z.effect].icon]
+		icon.position = FIELD_POS + c
+		zone_layer.add_child(icon)
+		z["ring_node"] = ring
+		z["icon_node"] = icon
+		zones.append(z)
 	_update_zones()
 
 
@@ -3013,43 +3034,71 @@ func _draw_zones() -> void:
 	for z in zones:
 		var c: Vector2 = FIELD_POS + z.center
 		var r: float = z.r
-		# the ring wears the color it wants: hot pink = make it Cute, ember = make it Scary
 		var aligned := Color(1, 0.42, 0.74) if z.side == CUTE else Color(1, 0.42, 0.12)
 		zone_layer.draw_circle(c, r, Color(aligned, 0.10))
-		# rotating dashed ring
-		var n := 28
-		var spin := clock * (0.25 if z.kind == "hold" else -0.25)
-		for k in n:
-			var a0 := spin + TAU * k / n
-			var a1 := a0 + TAU / n * 0.55
-			zone_layer.draw_arc(c, r, a0, a1, 6, INK, 8.0, true)
-			zone_layer.draw_arc(c, r, a0, a1, 6, aligned, 4.0, true)
 		# control meter: arc fills with the zone's color, gold when held
 		var arc_col := GOLD if z.held else aligned
-		zone_layer.draw_arc(c, r + 10.0, -PI / 2, -PI / 2 + TAU * z.frac, 48, INK, 9.0, true)
-		zone_layer.draw_arc(c, r + 10.0, -PI / 2, -PI / 2 + TAU * z.frac, 48, arc_col, 5.0, true)
-		# 60% notch
+		if z.frac > 0.005:
+			zone_layer.draw_arc(c, r + 10.0, -PI / 2, -PI / 2 + TAU * z.frac, 40, INK, 9.0, true)
+			zone_layer.draw_arc(c, r + 10.0, -PI / 2, -PI / 2 + TAU * z.frac, 40, arc_col, 5.0, true)
 		var na := -PI / 2 + TAU * ZONE_CONTROL
 		zone_layer.draw_line(c + Vector2.from_angle(na) * (r + 4), c + Vector2.from_angle(na) * (r + 16), INK, 4.0)
-		var icon: Texture2D = T.zi_hold if z.kind == "hold" else T[EFFECTS[z.effect].icon]
-		var isz := 58.0 + (6.0 * sin(clock * 3.0) if z.held else 0.0)
-		zone_layer.draw_texture_rect(icon, Rect2(c - Vector2(isz, isz) / 2.0, Vector2(isz, isz)), false,
-			Color(1, 1, 1, 1.0 if z.held else 0.75))
 		_zone_badge(z, c, r)
+
+
+var _zone_sig := ""
+var _reticles: Array = []
+var _lone_rings: Array = []
+
+
+## Per frame: spin the zone rings, pulse held icons, move the target
+## reticles and lone-bat rings, and redraw the static parts only on change.
+func _update_zone_sprites() -> void:
+	var sig := ""
+	for z in zones:
+		sig += "%d%s|" % [int(z.frac * 100.0), "h" if z.held else ""]
+		if is_instance_valid(z.get("ring_node")):
+			z.ring_node.rotation = clock * (0.25 if z.kind == "hold" else -0.25)
+			var isz := 58.0 + (6.0 * sin(clock * 3.0) if z.held else 0.0)
+			var it: Sprite2D = z.icon_node
+			it.scale = Vector2.ONE * (isz / it.texture.get_width())
+			it.modulate.a = 1.0 if z.held else 0.75
+	if sig != _zone_sig:
+		_zone_sig = sig
+		zone_layer.queue_redraw()
 	# reticles around must-destroy targets
+	var targets: Array = []
 	for it in items:
 		if it.alive and it.kind == "idol":
-			_reticle(FIELD_POS + it.pos, 40.0)
+			targets.append([FIELD_POS + it.pos, 40.0])
 	for b in bouncers:
 		if b.kind == "elite":
-			_reticle(FIELD_POS + b.pos, 34.0)
-	if mode == "level" and int(level.get("pens", 0)) > 0:
+			targets.append([FIELD_POS + b.pos, 34.0])
+	_place_pool(_reticles, T.ui_reticle, targets, true)
+	var lone: Array = []
+	if mode == "level" and int(level.get("pens", 0)) > 0 and state == "play":
 		update_lone_bats()
 		for b in lone_bats:
-			if is_instance_valid(b.node):
-				var c: Vector2 = FIELD_POS + b.pos
-				zone_layer.draw_arc(c, 27.0, 0, TAU, 32, INK, 7.0, true)
-				zone_layer.draw_arc(c, 27.0, 0, TAU, 32, GOLD, 3.5, true)
+			lone.append([FIELD_POS + b.pos, 27.0])
+	_place_pool(_lone_rings, T.ui_lone_ring, lone, false)
+
+
+func _place_pool(pool: Array, tex: Texture2D, spots: Array, spin: bool) -> void:
+	while pool.size() < spots.size():
+		var sp := Sprite2D.new()
+		sp.texture = tex
+		zone_layer.add_child(sp)
+		pool.append(sp)
+	for k in pool.size():
+		var sp: Sprite2D = pool[k]
+		sp.visible = k < spots.size()
+		if not sp.visible:
+			continue
+		sp.position = spots[k][0]
+		if spin:
+			var rr: float = float(spots[k][1]) + 4.0 * sin(clock * 5.0)
+			sp.rotation = clock * 1.2
+			sp.scale = Vector2.ONE * (rr / 40.0)
 
 
 ## Word label under (or over, near the bottom edge) each zone: which color
@@ -3069,21 +3118,11 @@ func _zone_badge(z: Dictionary, c: Vector2, r: float) -> void:
 	var bgc := Color("ffd0e4") if cute else Color("3a0812")
 	var fg := INK if cute else Color("ff8a4a")
 	var edge := GOLD if z.held else (Color("ff6fae") if cute else Color("ff5a2e"))
-	if z.held:
-		rect = rect.grow(1.5 * sin(clock * 6.0))
 	_rrect(zone_layer, rect.grow(3.0), h / 2.0 + 3.0, INK)
 	_rrect(zone_layer, rect, h / 2.0, bgc)
 	_rrect(zone_layer, rect, h / 2.0, edge, false, 3.0)
 	zone_layer.draw_string(font_ui_bold, Vector2(rect.position.x, rect.position.y + h / 2.0 + fs * 0.36),
 		text, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x, fs, fg)
-
-
-func _reticle(c: Vector2, r: float) -> void:
-	var rr := r + 4.0 * sin(clock * 5.0)
-	for k in 4:
-		var a := clock * 1.2 + k * PI / 2.0
-		zone_layer.draw_arc(c, rr, a - 0.35, a + 0.35, 8, INK, 8.0, true)
-		zone_layer.draw_arc(c, rr, a - 0.35, a + 0.35, 8, Color(1, 0.84, 0.35), 4.0, true)
 
 
 ## Endless anti-idle: points only flow while you're actively claiming.

@@ -823,6 +823,42 @@ def lantern(name="ent_lantern", size=120):
     render(name, body, defs, size, size)
 
 
+def ring_sprites():
+    """Pre-drawn rings for hold/shrine zones, target reticles and lone bats,
+    so the game rotates sprites instead of rebuilding arcs every frame."""
+    import math
+    # dashed zone ring, radius 100 (scaled per zone), tinted in game
+    R = 100
+    size = 2 * (R + 8)
+    c = size / 2
+    period = 2 * math.pi * R / 28
+    dash = f'stroke-dasharray="{period * 0.55:.2f} {period * 0.45:.2f}"'
+    body = (f'<circle cx="{c}" cy="{c}" r="{R}" fill="none" stroke="{INK}" stroke-width="8" {dash}/>'
+            f'<circle cx="{c}" cy="{c}" r="{R}" fill="none" stroke="#FFFFFF" stroke-width="4" {dash}/>')
+    render("ui_zone_ring", body, "", size, size)
+    # four gold brackets around targets, radius 40
+    R = 40
+    size = 2 * (R + 12)
+    c = size / 2
+    body = ""
+    for k in range(4):
+        a = k * math.pi / 2
+        a0, a1 = a - 0.35, a + 0.35
+        x0, y0 = c + R * math.cos(a0), c + R * math.sin(a0)
+        x1, y1 = c + R * math.cos(a1), c + R * math.sin(a1)
+        d = f"M {x0:.2f} {y0:.2f} A {R} {R} 0 0 1 {x1:.2f} {y1:.2f}"
+        body += f'<path d="{d}" fill="none" stroke="{INK}" stroke-width="8"/>'
+        body += f'<path d="{d}" fill="none" stroke="#FFD659" stroke-width="4"/>'
+    render("ui_reticle", body, "", size, size)
+    # gold ring around a lone bat, radius 27
+    R = 27
+    size = 2 * (R + 8)
+    c = size / 2
+    body = (f'<circle cx="{c}" cy="{c}" r="{R}" fill="none" stroke="{INK}" stroke-width="7"/>'
+            f'<circle cx="{c}" cy="{c}" r="{R}" fill="none" stroke="#FFD659" stroke-width="3.5"/>')
+    render("ui_lone_ring", body, "", size, size)
+
+
 def charm(name="ent_charm", size=110):
     c = size / 2
     defs = radial("ch", [(0, "#FFFFFF", 1), (0.5, "#CFEFFF", 1), (1, "#7CB8F0", 1)], cx="35%", cy="35%", r="70%")
@@ -887,6 +923,7 @@ def entities():
     burrow("ent_burrow_scary", True)
     burrow("ent_burrow_cute", False)
     lantern()
+    ring_sprites()
     charm()
     boss_bat()
     ui_icons()

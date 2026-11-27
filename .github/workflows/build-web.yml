@@ -59,6 +59,12 @@ jobs:
         timeout-minutes: 12
         run: ~/godot/godot --headless --path . -s res://tests/bot_test.gd
 
+      - name: Stamp build version
+        run: |
+          id="$(git rev-parse --short HEAD) $(TZ=America/Los_Angeles date '+%b %-d %-I:%M%p')"
+          printf 'class_name BuildInfo\nconst ID := "%s"\n' "$id" > scripts/build_info.gd
+          cat scripts/build_info.gd
+
       - name: Export web build
         run: |
           mkdir -p build/web
