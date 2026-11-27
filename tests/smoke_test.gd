@@ -455,12 +455,15 @@ func run() -> void:
 	check(g.get_tree().root.content_scale_mode == (Window.CONTENT_SCALE_MODE_VIEWPORT if big else Window.CONTENT_SCALE_MODE_CANVAS_ITEMS),
 		"Lite renders at design resolution on big screens, native on small ones")
 	check(g.audio.single and g.particle_mult < 1.0, "Lite plays one music loop and fewer particles")
+	check(g.audio.music_cute.playing != g.audio.music_scary.playing, "Lite (outside the browser) plays exactly one music loop")
 	var b0: float = g.scary_percent()
 	draw([Vector2(80, 100), Vector2(80, 560), Vector2(200, 560), Vector2(200, 100)])
 	grow_out()
 	check(absf(g.scary_percent() - b0) > 3.0, "claims still work in Lite (%.1f%% -> %.1f%%)" % [b0, g.scary_percent()])
 	g._apply_gfx(1)
 	check(g.field_mat.shader.resource_path.ends_with("territory.gdshader") and not g.audio.single, "Medium uses the full shaders")
+	check(g.audio.music_cute.stream.resource_path.ends_with("music_cute.ogg") and g.audio.music_cute.playing and g.audio.music_scary.playing,
+		"leaving Lite brings back both full music loops")
 	g._apply_gfx(0)
 	check(g.field_mat.get_shader_parameter("mask_tex") == g.mask_tex, "High reads the full mask texture again")
 	check(g.get_tree().root.content_scale_mode == Window.CONTENT_SCALE_MODE_CANVAS_ITEMS, "High renders at native resolution")

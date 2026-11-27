@@ -15,22 +15,39 @@ var enabled := true
 var morph := 0.0
 var music_level := 1.0   # ducked during menus/results
 var focused := true
-var single := false          # Lite: decode only the louder loop (saves CPU)
+var single := false          # Lite: one loop at a time, played by the browser
 var _active_scary := false
+# Lite plays mono copies of the loops as Web Audio samples: the browser mixes
+# them on its own thread, so slow game frames can't make the music stutter.
+# We keep our own loop clock so a mood switch picks up in step.
+# On the web the music is played by the browser's Web Audio (web/music.js):
+# decoding and mixing happen off the game thread, so it never stutters.
+var web_music := false
+var _js_vol := Vector2(-1, -1)
+var _full := []
+var _lite := []
+var _loop_t := 0.0
+var _web_ready := false
+var _loop_len := 45.714
 var _js_visibility_cb   # keeps the JS callback alive
 
 
 func _ready() -> void:
 	music_cute = _music("res://assets/audio/music_cute.ogg")
 	music_scary = _music("res://assets/audio/music_scary.ogg")
+	_full = [music_cute.stream, music_scary.stream]
+	web_music = OS.has_feature("web") and _init_web_music()
+	_loop_len = music_cute.stream.get_length()
+	_lite = _full       # outside the browser Lite just plays one normal loop
 	for i in 10:
 		var p := AudioStreamPlayer.new()
 		add_child(p)
 		voices.append(p)
 	for n in SFX:
 		streams[n] = load("res://assets/audio/sfx_%s.ogg" % n)
-	music_cute.play()
-	music_scary.play()
+	if not web_music:
+		music_cute.play()
+		music_scary.play()
 	_apply_volumes()
 	# Browsers keep Web Audio running in background tabs, and Godot's main
 	# loop stops there, so react to the page being hidden directly from JS.
@@ -66,12 +83,40 @@ func set_focus(f: bool) -> void:
 	_update_paused()
 
 
+func _init_web_music() -> bool:
+	# music.js sits next to index.html; load it once
+	JavaScriptBridge.eval("""
+		if (!window.WCMusic && !window.__wcm_loading) {
+			window.__wcm_loading = true;
+			var s = document.createElement('script'); s.src = 'music.js'; document.head.appendChild(s);
+		}""", true)
+	return true
+
+
+func _js(code: String) -> void:
+	JavaScriptBridge.eval("if (window.WCMusic) { " + code + " }", true)
+
+
+func _active() -> AudioStreamPlayer:
+	return music_scary if _active_scary else music_cute
+
+
 func _update_paused() -> void:
+	if web_music:
+		_js("WCMusic.setRunning(%s);" % ("true" if enabled and focused else "false"))
+		return
 	if music_cute:
 		var run := enabled and focused
 		if single:
-			music_cute.stream_paused = not run or _active_scary
-			music_scary.stream_paused = not run or not _active_scary
+			# samples can't be paused reliably, so stop/restart at our clock
+			var a := _active()
+			var other := music_cute if _active_scary else music_scary
+			if other.playing:
+				other.stop()
+			if run and not a.playing:
+				a.play(fmod(_loop_t, _loop_len))
+			elif not run and a.playing:
+				a.stop()
 		else:
 			music_cute.stream_paused = not run
 			music_scary.stream_paused = not run
@@ -80,17 +125,29 @@ func _update_paused() -> void:
 func set_single(on: bool) -> void:
 	if on == single:
 		return
-	single = on
-	if not music_cute:
+	if web_music:
+		single = on
+		_js("WCMusic.setVariant('%s');" % ("lite" if on else "full"))
 		return
+	if not music_cute:
+		single = on
+		return
+	var players := [music_cute, music_scary]
 	if on:
+		_loop_t = music_cute.get_playback_position() if music_cute.playing else _loop_t
 		_active_scary = morph > 0.5
-	else:
-		# bring the paused loop back in step before both play again
-		var a := (music_scary if _active_scary else music_cute).get_playback_position()
-		(music_cute if _active_scary else music_scary).seek(a)
-	_update_paused()
+	for p in players:
+		p.stop()
+	single = on
+	for k in 2:
+		var p: AudioStreamPlayer = players[k]
+		p.stream = _lite[k] if on else _full[k]
+	if not on:
+		var t := fmod(_loop_t, _loop_len)
+		music_cute.play(t)
+		music_scary.play(t)
 	_apply_volumes()
+	_update_paused()
 
 
 func _music(path: String) -> AudioStreamPlayer:
@@ -131,15 +188,20 @@ func _apply() -> void:
 
 
 func _apply_volumes() -> void:
+	if web_music:
+		# equal-power crossfade in the browser; only send real changes
+		var v := Vector2(cos(morph * PI / 2.0), sin(morph * PI / 2.0)) * music_level
+		if v.distance_to(_js_vol) > 0.01:
+			_js_vol = v
+			_js("WCMusic.setVol(%.3f, %.3f);" % [v.x, v.y])
+		return
 	if not music_cute:
 		return
 	if single:
 		# one loop at a time; switch (in step) when the morph crosses over
 		var want := morph > (0.45 if _active_scary else 0.55)
 		if want != _active_scary:
-			var pos := (music_scary if _active_scary else music_cute).get_playback_position()
 			_active_scary = want
-			(music_scary if want else music_cute).seek(pos)
 			_update_paused()
 		var on_db := linear_to_db(maxf(music_level, 0.0001)) - 3.0
 		music_cute.volume_db = -80.0 if _active_scary else on_db
@@ -156,6 +218,17 @@ var _sync_t := 0.0
 
 
 func _process(delta: float) -> void:
+	if web_music:
+		# the script tag loads async: push the current state once it's there
+		if not _web_ready and bool(JavaScriptBridge.eval("!!window.WCMusic", true)):
+			_web_ready = true
+			_js("WCMusic.setVariant('%s');" % ("lite" if single else "full"))
+			_js_vol = Vector2(-1, -1)
+			_apply_volumes()
+			_update_paused()
+		return
+	if single and enabled and focused:
+		_loop_t = fmod(_loop_t + delta, _loop_len)
 	# keep the two loops locked together, checked rarely and only for big drift
 	_sync_t += delta
 	if _sync_t < 3.0 or single or not enabled or not music_cute.playing:

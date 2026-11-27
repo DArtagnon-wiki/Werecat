@@ -72,6 +72,9 @@ jobs:
           test -f build/web/index.wasm
           # Retire the old offline service worker on phones that still have it
           cp web/index.service.worker.js build/web/
+          # music is played by the browser (web/music.js), next to index.html
+          cp web/music.js build/web/
+          mkdir -p build/web/music && cp web/music/* build/web/music/
 
       - name: Browser soak test (no crash, no memory runaway)
         timeout-minutes: 5
