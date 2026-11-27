@@ -141,7 +141,16 @@ func _ramp(v: float, a: float, b: float) -> float:
 	return clampf((v - a) / (b - a), 0.0, 1.0)
 
 
+var perf_ms := 0.0
+
+
 func _process(delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	_step(delta)
+	perf_ms = lerpf(perf_ms, (Time.get_ticks_usec() - t0) / 1000.0, 0.1)
+
+
+func _step(delta: float) -> void:
 	t += delta
 	morph = move_toward(morph, target, delta * 0.5)
 	var nt := tier_for(morph)

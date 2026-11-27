@@ -448,7 +448,7 @@ func run() -> void:
 	var tex_before = g.field_mat.get_shader_parameter("mask_tex")
 	g._apply_gfx(2)
 	check(g.field_mat.shader.resource_path.ends_with("territory_lite.gdshader"), "Lite swaps in the lite territory shader")
-	check(g.field_mat.get_shader_parameter("mask_tex") == tex_before, "shader swap keeps the mask texture")
+	check(g.field_mat.get_shader_parameter("mask_tex") == g.lite_mask_tex and tex_before == g.mask_tex, "Lite reads the half-size mask texture")
 	check(g.field_mat.get_shader_parameter("noise_tex") != null and g.field_mat.get_shader_parameter("wide_tex") != null,
 		"Lite gets its noise and wide-blur textures")
 	var big := DisplayServer.window_get_size().x > 760
@@ -462,6 +462,7 @@ func run() -> void:
 	g._apply_gfx(1)
 	check(g.field_mat.shader.resource_path.ends_with("territory.gdshader") and not g.audio.single, "Medium uses the full shaders")
 	g._apply_gfx(0)
+	check(g.field_mat.get_shader_parameter("mask_tex") == g.mask_tex, "High reads the full mask texture again")
 	check(g.get_tree().root.content_scale_mode == Window.CONTENT_SCALE_MODE_CANVAS_ITEMS, "High renders at native resolution")
 	# auto: a slow stretch steps the tier down
 	g.gfx_setting = "auto"

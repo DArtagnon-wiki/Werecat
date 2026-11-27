@@ -63,7 +63,10 @@ async def main():
         ctx = await browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=DPR,
                                         is_mobile=True, has_touch=True)
         page = await ctx.new_page()
-        page.on("console", lambda m: logs.append(m.text) if "[perf]" in m.text or "[gfx]" in m.text else None)
+        if os.environ.get("CPU"):
+            cdp = await ctx.new_cdp_session(page)
+            await cdp.send("Emulation.setCPUThrottlingRate", {"rate": float(os.environ["CPU"])})
+        page.on("console", lambda m: logs.append(m.text) if "[perf" in m.text or "[gfx]" in m.text else None)
         await page.goto(url, wait_until="load", timeout=90000)
         await asyncio.sleep(WARMUP)
         await page.evaluate(COUNTER)

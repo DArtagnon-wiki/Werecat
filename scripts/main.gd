@@ -182,6 +182,7 @@ var perf_log_t := 0.0
 var gpu_name := ""
 var device_info := ""
 var mask_serial := 0
+var no_redraw := false
 var zones_serial := -1
 
 # nodes
@@ -223,6 +224,16 @@ var level_tiles: Array = []
 var mask_img: Image
 var mask_tex: ImageTexture
 var prev_tex: ImageTexture
+# Lite: half-resolution mask (the GPU filters it), no CPU upscaling
+var lite_img: Image
+var lite_mask_tex: ImageTexture
+var lite_prev_tex: ImageTexture
+# uploads rotate through these so we never rewrite a texture the GPU may
+# still be drawing from (that stalls mobile GPUs)
+var lite_ring: Array = []
+var lite_ring_i := 0
+var wide_ring: Array = []
+var wide_ring_i := 0
 var flip_t := 1.0
 var menu_t := 0.0
 
@@ -305,7 +316,15 @@ func _init_gfx() -> void:
 	shader_full = {"field": field_mat.shader, "bg": (bg.material as ShaderMaterial).shader}
 	shader_lite = {"field": load("res://shaders/territory_lite.gdshader"),
 		"bg": load("res://shaders/background_lite.gdshader")}
-	wide_tex = ImageTexture.create_from_image(Image.create(GW / 2, GH / 2, false, Image.FORMAT_RG8))
+	var wimg := Image.create(GW / 7, GH / 7, false, Image.FORMAT_RG8)
+	for k in 2:
+		wide_ring.append(ImageTexture.create_from_image(wimg))
+	wide_tex = wide_ring[0]
+	lite_img = Image.create(GW / 2, GH / 2, false, Image.FORMAT_RG8)
+	for k in 3:
+		lite_ring.append(ImageTexture.create_from_image(lite_img))
+	lite_mask_tex = lite_ring[0]
+	lite_prev_tex = lite_ring[0]
 	gpu_name = "%s · %s" % [RenderingServer.get_video_adapter_vendor(), RenderingServer.get_video_adapter_name()]
 	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
 	var show_overlay := DEBUG_OVERLAY
@@ -325,6 +344,10 @@ func _init_gfx() -> void:
 					level_idx = li
 					level = levels[li]
 					begin_play()).call_deferred()
+			elif kv[0] == "measure" and kv.size() > 1 and kv[1] == "0":
+				RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), false)
+			elif kv[0] == "noredraw":
+				no_redraw = true
 			elif kv[0] == "hide" and kv.size() > 1:
 				# diagnostics: ?hide=bg,field,cat,ui,fx hides layers to find GPU cost
 				for h in kv[1].split(",", false):
@@ -346,6 +369,38 @@ func _init_gfx() -> void:
 			+ " + ' cores · ' + (navigator.deviceMemory ? navigator.deviceMemory + ' GB' : '? GB')", true))
 	perf_hidden = not show_overlay
 	_apply_gfx(_wanted_tier())
+
+
+var _frame_sig := -1.0
+var _sent_morph := -1.0
+var _sent_freeze := -1.0
+var _sent_hold := -1.0
+var _meter_sig := ""
+
+
+## The frame only depends on the morph and the meter on the split, the band
+## and (inside the band) a pulse, so skip redraws when nothing changed.
+func _redraw_if_changed() -> void:
+	var fs := snappedf(werecat.morph, 0.01)
+	if fs != _frame_sig:
+		_frame_sig = fs
+		frame.queue_redraw()
+	if not meter.visible:
+		return
+	var s := scary_percent()
+	var inside := s >= goal_min and s <= goal_max
+	var ms := "%.1f|%s|%s|%d" % [s, goal_min, goal_max, int(clock * (20.0 if gfx_tier < 2 else 10.0)) if inside else -1]
+	if ms != _meter_sig:
+		_meter_sig = ms
+		meter.queue_redraw()
+
+
+## Runs f and keeps a smoothed time for it in perf[key] (ms).
+func _timed(key: String, f: Callable) -> void:
+	var t0 := Time.get_ticks_usec()
+	f.call()
+	var ms := (Time.get_ticks_usec() - t0) / 1000.0
+	perf[key] = lerpf(float(perf.get(key, ms)), ms, 0.1)
 
 
 func _gfx_choice() -> String:
@@ -390,10 +445,11 @@ func _apply_gfx(tier: int) -> void:
 		field_mat.set_shader_parameter("noise_tex", noise_tex)
 		field_mat.set_shader_parameter("wide_tex", wide_tex)
 		bm.set_shader_parameter("noise_tex", noise_tex)
-		var ft := flip_t
-		_upload_mask(false)      # fills the wide-blur texture
-		flip_t = ft
-		field_mat.set_shader_parameter("flip_progress", flip_t)
+	field_mat.set_shader_parameter("mask_tex", lite_mask_tex if lite else mask_tex)
+	field_mat.set_shader_parameter("prev_mask_tex", lite_prev_tex if lite else prev_tex)
+	_upload_mask(false)      # refill the textures this tier reads
+	flip_t = 1.0
+	field_mat.set_shader_parameter("flip_progress", flip_t)
 	particle_mult = 0.4 if lite else 1.0
 	audio.set_single(lite)
 	auto_settle = AUTO_SETTLE
@@ -468,6 +524,15 @@ func _refresh_gfx_buttons() -> void:
 
 # ================================================================ perf overlay
 
+func _particle_count() -> int:
+	var n := 0
+	for l in [fx_layer, fx_back]:
+		for c in l.get_children():
+			if c is CPUParticles2D and c.emitting:
+				n += c.amount
+	return n
+
+
 func _build_perf_overlay() -> void:
 	perf_layer = CanvasLayer.new()
 	perf_layer.layer = 100
@@ -521,6 +586,9 @@ func _perf_tick(delta: float) -> void:
 		render = get_viewport().get_visible_rect().size
 	if perf_log_t >= 5.0:
 		perf_log_t = 0.0
+		print("[perf2] grow=%.2f creatures=%.2f items=%.2f anim=%.2f hud=%.2f frame=%.2f meter=%.2f zones=%.2f cat=%.2f parts=%d" % [
+			float(perf.get("growth", 0)), float(perf.get("creatures", 0)), float(perf.get("items", 0)), float(perf.get("anim", 0)), float(perf.get("hud", 0)),
+			float(perf.get("d_frame", 0)), float(perf.get("d_meter", 0)), float(perf.get("d_zones", 0)), werecat.perf_ms, _particle_count()])
 		print("[perf] fps=%.1f avg=%.1fms worst=%.0fms tier=%s game=%.2f mask=%.2f zones=%.2f fill=%.1f proc=%.2f render_cpu=%.2f wait=%.1f" % [
 			fps, avg, worst, GFX_NAMES[gfx_tier], perf.game, perf.mask, perf.zones, perf.fill, proc, r_cpu, wait])
 	if perf_hidden:
@@ -534,6 +602,11 @@ func _perf_tick(delta: float) -> void:
 	var lines := PackedStringArray()
 	lines.append("%.0f fps · avg %.1f ms · worst %.0f ms" % [fps, avg, worst])
 	lines.append("script %.1f ms (game %.1f, mask %.1f, zones %.1f)" % [proc, perf.game, perf.mask, perf.zones])
+	var pg := func(k: String) -> float: return float(perf.get(k, 0.0))
+	lines.append("game: grow %.1f · creatures %.1f · items %.1f · anim %.1f · hud %.1f" % [pg.call("growth"), pg.call("creatures"), pg.call("items"), pg.call("anim"), pg.call("hud")])
+	var ours: float = perf.game + pg.call("d_frame") + pg.call("d_meter") + pg.call("d_zones") + werecat.perf_ms
+	lines.append("engine (not our scripts) %.1f ms" % maxf(0.0, proc - ours))
+	lines.append("draw: frame %.1f · meter %.1f · zones %.1f · cat %.1f · particles %d" % [pg.call("d_frame"), pg.call("d_meter"), pg.call("d_zones"), werecat.perf_ms, _particle_count()])
 	lines.append("draw cpu %.1f ms · gpu %s · wait %.1f ms" % [r_cpu, ("%.1f ms" % r_gpu) if r_gpu > 0.0 else "n/a", wait])
 	if wait > avg * 0.5:
 		lines.append("> mostly waiting on the GPU")
@@ -637,11 +710,11 @@ func _build_scene() -> void:
 	field_mat.set_shader_parameter("prev_mask_tex", prev_tex)
 
 	frame = Node2D.new()
-	frame.draw.connect(_draw_frame)
+	frame.draw.connect(func() -> void: _timed("d_frame", _draw_frame))
 	world.add_child(frame)
 
 	zone_layer = Node2D.new()
-	zone_layer.draw.connect(_draw_zones)
+	zone_layer.draw.connect(func() -> void: _timed("d_zones", _draw_zones))
 	world.add_child(zone_layer)
 
 	item_layer = Node2D.new()
@@ -924,7 +997,7 @@ func _build_hud() -> void:
 	lbl_idle.visible = false
 	hud.add_child(lbl_idle)
 	meter = Node2D.new()
-	meter.draw.connect(_draw_meter)
+	meter.draw.connect(func() -> void: _timed("d_meter", _draw_meter))
 	hud.add_child(meter)
 
 
@@ -1505,28 +1578,49 @@ func _upload_mask(animate: bool, origin := Vector2(0.5, 0.5)) -> void:
 	if tex_bytes.size() != GW * GH * 2:
 		return
 	var t0 := Time.get_ticks_usec()
-	if animate:
-		prev_tex.update(mask_img)
-	var img := Image.create_from_data(GW, GH, false, Image.FORMAT_RG8, tex_bytes)
-	img.resize(GW / 2, GH / 2, Image.INTERPOLATE_BILINEAR)
 	if gfx_tier == 2:
-		# Lite: a wider blur for the seam halo (replaces 8 shader taps)
-		var w := img.duplicate() as Image
-		w.resize(GW / 7, GH / 7, Image.INTERPOLATE_BILINEAR)
-		w.resize(GW / 2, GH / 2, Image.INTERPOLATE_CUBIC)
-		wide_tex.update(w)
-	img.resize(GW, GH, Image.INTERPOLATE_CUBIC)
-	mask_img = img
-	mask_tex.update(mask_img)
+		_upload_mask_lite(animate)
+	else:
+		if animate:
+			prev_tex.update(mask_img)
+		var img := Image.create_from_data(GW, GH, false, Image.FORMAT_RG8, tex_bytes)
+		img.resize(GW / 2, GH / 2, Image.INTERPOLATE_BILINEAR)
+		img.resize(GW, GH, Image.INTERPOLATE_CUBIC)
+		mask_img = img
+		mask_tex.update(mask_img)
 	mask_dirty = false
 	perf.mask = (Time.get_ticks_usec() - t0) / 1000.0
 	if animate:
 		flip_t = 0.0
 		field_mat.set_shader_parameter("flip_origin", origin)
 	else:
-		prev_tex.update(mask_img)
+		if gfx_tier != 2:
+			prev_tex.update(mask_img)
 		flip_t = 1.0
 	field_mat.set_shader_parameter("flip_progress", flip_t)
+
+
+## Lite upload: one half-size downscale (it doubles as the blur) and a tiny
+## wide-blur copy for the seam halo. The shader's hardware filtering does the
+## smoothing that the full path does with CPU upscales.
+func _upload_mask_lite(animate: bool) -> void:
+	var img := Image.create_from_data(GW, GH, false, Image.FORMAT_RG8, tex_bytes)
+	img.resize(GW / 2, GH / 2, Image.INTERPOLATE_BILINEAR)
+	lite_img = img
+	var old: ImageTexture = lite_ring[lite_ring_i]
+	lite_ring_i = (lite_ring_i + 1) % lite_ring.size()
+	lite_mask_tex = lite_ring[lite_ring_i]
+	lite_mask_tex.update(img)
+	# while a claim animates, "prev" is simply the texture we just retired
+	lite_prev_tex = old if animate else lite_mask_tex
+	var w := img.duplicate() as Image
+	w.resize(GW / 7, GH / 7, Image.INTERPOLATE_BILINEAR)
+	wide_ring_i = (wide_ring_i + 1) % wide_ring.size()
+	wide_tex = wide_ring[wide_ring_i]
+	wide_tex.update(w)
+	field_mat.set_shader_parameter("mask_tex", lite_mask_tex)
+	field_mat.set_shader_parameter("prev_mask_tex", lite_prev_tex)
+	field_mat.set_shader_parameter("wide_tex", wide_tex)
 
 
 # ================================================================ input + strokes
@@ -1929,64 +2023,148 @@ func _flip_empty_pockets(color: int, seeds: PackedInt32Array) -> int:
 
 func _flip_pockets_core(color: int, seeds: PackedInt32Array) -> int:
 	var invaded := 1 - color
-	var seen := PackedByteArray()
-	seen.resize(GW * GH)
-	# cells next to the new wall: a pocket must include one of these to change
-	var near := PackedByteArray()
-	near.resize(GW * GH)
-	for i in seeds:
-		var x := i % GW
-		near[i] = 1
-		if x > 0: near[i - 1] = 1
-		if x < GW - 1: near[i + 1] = 1
-		if i >= GW: near[i - GW] = 1
-		if i < GW * (GH - 1): near[i + GW] = 1
+	var n := GW * GH
+	# label[i]: 0 = unvisited, -1 = part of a region too big to ever flip
+	# (it holds a creature and outgrows every capture limit), >0 = pocket id
+	var label := PackedInt32Array()
+	label.resize(n)
+	var occ_mark := PackedByteArray()
+	occ_mark.resize(n)
 	var occ := {}
-	for b in bouncers:
-		if b.side == invaded and b.kind in ["basic", "stalker", "boss", "elite"]:
-			var ci := cell_index(b.pos)
+	for bo in bouncers:
+		if bo.side == invaded and bo.kind in ["basic", "stalker", "boss", "elite"]:
+			var ci := cell_index(bo.pos)
+			if ci < 0:
+				continue
+			occ_mark[ci] = 1
 			if not occ.has(ci):
 				occ[ci] = []
-			occ[ci].append(b)
-	var capture_cells := int(claimable * CAPTURE_FRAC)
-	var flipped := 0
-	var to_flip: Array = []
-	for start in GW * GH:
-		if seen[start] == 1 or mask[start] != invaded:
+			occ[ci].append(bo)
+	var max_frac := CAPTURE_FRAC
+	for ci in occ:
+		for bo in occ[ci]:
+			max_frac = maxf(max_frac, float(CAPTURE_FRAC_BY_KIND.get(bo.kind, CAPTURE_FRAC)))
+	var max_limit := int(claimable * max_frac) + 1
+	var stack := PackedInt32Array()
+	stack.resize(n)
+	var visit := PackedInt32Array()
+	visit.resize(n)
+	# 1) from each creature: if its region outgrows every capture limit it can
+	#    never flip, so mark what we saw as dead and stop early
+	for ci in occ:
+		if label[ci] != 0 or mask[ci] != invaded:
 			continue
-		var pocket := PackedInt32Array()
-		var inside: Array = []
-		var touches := false
-		var stack := PackedInt32Array([start])
-		seen[start] = 1
-		while stack.size() > 0:
-			var i: int = stack[stack.size() - 1]
-			stack.remove_at(stack.size() - 1)
-			pocket.append(i)
-			if near[i] == 1:
-				touches = true
-			if occ.has(i):
-				inside.append_array(occ[i])
+		var sp := 0
+		var vc := 0
+		stack[sp] = ci
+		sp += 1
+		label[ci] = 1
+		var dead := false
+		while sp > 0:
+			sp -= 1
+			var i := stack[sp]
+			visit[vc] = i
+			vc += 1
+			if vc >= max_limit:
+				dead = true
+				break
 			var x := i % GW
-			if x > 0 and seen[i - 1] == 0 and mask[i - 1] == invaded:
-				seen[i - 1] = 1
-				stack.append(i - 1)
-			if x < GW - 1 and seen[i + 1] == 0 and mask[i + 1] == invaded:
-				seen[i + 1] = 1
-				stack.append(i + 1)
-			if i >= GW and seen[i - GW] == 0 and mask[i - GW] == invaded:
-				seen[i - GW] = 1
-				stack.append(i - GW)
-			if i < GW * (GH - 1) and seen[i + GW] == 0 and mask[i + GW] == invaded:
-				seen[i + GW] = 1
-				stack.append(i + GW)
-		if not touches:
-			continue
-		var limit := capture_cells
-		for b in inside:
-			limit = maxi(limit, int(claimable * float(CAPTURE_FRAC_BY_KIND.get(b.kind, CAPTURE_FRAC))))
-		if inside.is_empty() or pocket.size() < limit:
-			to_flip.append({"cells": pocket, "inside": inside})
+			if x > 0 and label[i - 1] == 0 and mask[i - 1] == invaded:
+				label[i - 1] = 1
+				stack[sp] = i - 1
+				sp += 1
+			if x < GW - 1 and label[i + 1] == 0 and mask[i + 1] == invaded:
+				label[i + 1] = 1
+				stack[sp] = i + 1
+				sp += 1
+			if i >= GW and label[i - GW] == 0 and mask[i - GW] == invaded:
+				label[i - GW] = 1
+				stack[sp] = i - GW
+				sp += 1
+			if i < n - GW and label[i + GW] == 0 and mask[i + GW] == invaded:
+				label[i + GW] = 1
+				stack[sp] = i + GW
+				sp += 1
+		if dead:
+			for k in vc:
+				label[visit[k]] = -1
+			for k in sp:
+				label[stack[k]] = -1
+		else:
+			for k in vc:
+				label[visit[k]] = 0    # small pocket: the full pass decides
+	# 2) pockets next to the new wall
+	var next_id := 2
+	var to_flip: Array = []
+	for si in seeds:
+		var sx := si % GW
+		for start in [si, si - 1 if sx > 0 else -1, si + 1 if sx < GW - 1 else -1, si - GW, si + GW]:
+			if start < 0 or start >= n or label[start] != 0 or mask[start] != invaded:
+				continue
+			var pid := next_id
+			next_id += 1
+			var pocket := PackedInt32Array()
+			var inside: Array = []
+			var dead := false
+			var sp := 0
+			stack[sp] = start
+			sp += 1
+			label[start] = pid
+			while sp > 0:
+				sp -= 1
+				var i := stack[sp]
+				pocket.append(i)
+				if occ_mark[i] == 1:
+					inside.append_array(occ[i])
+				var x := i % GW
+				var nb := i - 1
+				if x > 0 and mask[nb] == invaded:
+					if label[nb] == 0:
+						label[nb] = pid
+						stack[sp] = nb
+						sp += 1
+					elif label[nb] == -1:
+						dead = true
+						break
+				nb = i + 1
+				if x < GW - 1 and mask[nb] == invaded:
+					if label[nb] == 0:
+						label[nb] = pid
+						stack[sp] = nb
+						sp += 1
+					elif label[nb] == -1:
+						dead = true
+						break
+				nb = i - GW
+				if nb >= 0 and mask[nb] == invaded:
+					if label[nb] == 0:
+						label[nb] = pid
+						stack[sp] = nb
+						sp += 1
+					elif label[nb] == -1:
+						dead = true
+						break
+				nb = i + GW
+				if nb < n and mask[nb] == invaded:
+					if label[nb] == 0:
+						label[nb] = pid
+						stack[sp] = nb
+						sp += 1
+					elif label[nb] == -1:
+						dead = true
+						break
+			if dead:
+				for i in pocket:
+					label[i] = -1
+				for k in sp:
+					label[stack[k]] = -1
+				continue
+			var limit := int(claimable * CAPTURE_FRAC)
+			for bb in inside:
+				limit = maxi(limit, int(claimable * float(CAPTURE_FRAC_BY_KIND.get(bb.kind, CAPTURE_FRAC))))
+			if inside.is_empty() or pocket.size() < limit:
+				to_flip.append({"cells": pocket, "inside": inside})
+	var flipped := 0
 	# A color can never be wiped out: if these flips would take all of the
 	# invaded color's ground, its largest pocket survives as a foothold (any
 	# creatures in it can still be trapped).
@@ -2311,9 +2489,11 @@ func _process(delta: float) -> void:
 		upload_cool = 1.0 / 15.0
 	var m := werecat.morph
 	var bm: ShaderMaterial = bg.material
-	bm.set_shader_parameter("morph", m)
-	field_mat.set_shader_parameter("morph", m)
-	audio.set_morph(m)
+	if absf(m - _sent_morph) > 0.002:
+		_sent_morph = m
+		bm.set_shader_parameter("morph", m)
+		field_mat.set_shader_parameter("morph", m)
+		audio.set_morph(m)
 	if state == "title":
 		menu_t += delta
 		var cyc := fmod(menu_t, 9.0)
@@ -2326,26 +2506,32 @@ func _process(delta: float) -> void:
 			_update_zones()
 			perf.zones = (Time.get_ticks_usec() - tz) / 1000.0
 		freeze_t = maxf(0.0, freeze_t - delta)
-		step_growth(delta)
+		_timed("growth", step_growth.bind(delta))
 		if state == "play":
-			step_entities(delta)
+			_timed("creatures", step_entities.bind(delta))
 		if state == "play":
-			step_items(delta)
+			_timed("items", step_items.bind(delta))
 		if state == "play":
 			if mode == "endless":
 				step_endless(delta)
 			else:
 				step_goal(delta)
 		werecat.set_target(scary_percent() / 100.0)
-	field_mat.set_shader_parameter("freeze", clampf(freeze_t, 0.0, 1.0))
-	bm.set_shader_parameter("hold", hold / HOLD_TIME if mode == "level" and state == "play" else 0.0)
-	_animate_entities()
+	var fz := clampf(freeze_t, 0.0, 1.0)
+	if fz != _sent_freeze:
+		_sent_freeze = fz
+		field_mat.set_shader_parameter("freeze", fz)
+	var hv := hold / HOLD_TIME if mode == "level" and state == "play" else 0.0
+	if hv != _sent_hold:
+		_sent_hold = hv
+		bm.set_shader_parameter("hold", hv)
+	_timed("anim", _animate_entities)
 	zone_layer.queue_redraw()
 	shake = maxf(0.0, shake - delta * 2.5)
 	world.position = stage_off + Vector2(rng.randf_range(-1, 1), rng.randf_range(-1, 1)) * 10.0 * shake * shake
-	_update_hud()
-	frame.queue_redraw()
-	meter.queue_redraw()
+	_timed("hud", _update_hud)
+	if not no_redraw:
+		_redraw_if_changed()
 	perf.game = (Time.get_ticks_usec() - t_frame) / 1000.0
 	_gfx_tick(delta)
 	_perf_tick(delta)
