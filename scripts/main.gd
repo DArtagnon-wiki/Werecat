@@ -164,6 +164,7 @@ var noise_tex: Texture2D
 var wide_tex: ImageTexture
 var btn_gfx_title: Button
 var btn_gfx_pause: Button
+var btn_stats: Button
 var auto_t := 0.0
 var auto_frames := 0
 var auto_settle := AUTO_SETTLE
@@ -300,6 +301,26 @@ func _notification(what: int) -> void:
 			_on_focus_changed(false)
 		NOTIFICATION_APPLICATION_FOCUS_IN, NOTIFICATION_WM_WINDOW_FOCUS_IN, NOTIFICATION_APPLICATION_RESUMED:
 			_on_focus_changed(true)
+		NOTIFICATION_WM_GO_BACK_REQUEST:
+			_go_back()
+
+
+## Android back button: step back through the screens instead of quitting
+## mid-game; only the title screen closes the app.
+func _go_back() -> void:
+	match state:
+		"play":
+			_pause()
+		"pause":
+			_resume()
+		"intro":
+			_show("levels")
+		"levels":
+			_show("title")
+		"title":
+			get_tree().quit()
+		_:
+			_quit_to_levels()
 
 
 ## Going to the background mutes everything and pauses a level in progress.
@@ -328,7 +349,9 @@ func _init_gfx() -> void:
 	lite_prev_tex = lite_ring[0]
 	gpu_name = "%s · %s" % [RenderingServer.get_video_adapter_vendor(), RenderingServer.get_video_adapter_name()]
 	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
-	var show_overlay := DEBUG_OVERLAY
+	# the readout starts visible on the web debug build, hidden in the app
+	# (Pause > Stats turns it on)
+	var show_overlay := DEBUG_OVERLAY and OS.has_feature("web")
 	if OS.has_feature("web"):
 		var q := str(JavaScriptBridge.eval("location.search", true))
 		for part in q.trim_prefix("?").split("&", false):
@@ -503,6 +526,15 @@ func _gfx_tick(delta: float) -> void:
 	_apply_gfx(nt)
 
 
+func _toggle_stats() -> void:
+	audio.play("click", -4.0)
+	perf_hidden = not perf_hidden
+	if perf_panel:
+		perf_panel.visible = not perf_hidden
+	perf_t = 1.0
+	_refresh_gfx_buttons()
+
+
 func _cycle_gfx() -> void:
 	audio.play("click", -4.0)
 	var i := GFX_SETTINGS.find(gfx_setting)
@@ -521,6 +553,8 @@ func _refresh_gfx_buttons() -> void:
 	for b in [btn_gfx_title, btn_gfx_pause]:
 		if b:
 			b.text = "Graphics: " + names[_gfx_choice()]
+	if btn_stats:
+		btn_stats.text = "Stats: " + ("off" if perf_hidden else "on")
 
 
 # ================================================================ perf overlay
@@ -1195,6 +1229,9 @@ func _build_pause() -> void:
 	btn_gfx_pause = _button("", _cycle_gfx, false, 232, 64, 24)
 	btn_gfx_pause.position = Vector2(364, y + 6)
 	c.add_child(btn_gfx_pause)
+	btn_stats = _button("", _toggle_stats, false, 200, 44, 20)
+	btn_stats.position = Vector2(260, y + 80)
+	c.add_child(btn_stats)
 	_refresh_sound_buttons()
 
 

@@ -74,6 +74,18 @@ On every tier the werecat's 800x800 layers draw only their visible rectangle (`s
 
 Benchmark on a simulated weak GPU (Chrome SwiftShader): `python3 tests/browser_bench.py build/web "?gfx=lite" 3 20`.
 
+## Android app (sideload)
+
+`.github/workflows/build-android.yml` exports a signed APK on every push to `main` and publishes it as a GitHub Release. The latest one is always at:
+
+**https://github.com/DArtagnon-wiki/Werecat/releases/latest/download/werecat.apk**
+
+To install: open that link in Chrome on the phone, allow Chrome to install unknown apps when asked, then tap Install (choose "Install anyway" if Play Protect warns about an unknown developer). Installing a newer APK over the old one keeps saved progress, because every build is signed with the same key.
+
+The native app runs much faster than the web version on weak phones (no WebGL/WebAssembly overhead; audio has its own thread). Android's back button steps back through the screens (pause, levels, title) and only quits from the title screen. The debug readout starts hidden; Pause > Stats turns it on.
+
+The build needs three repository secrets (Settings > Secrets and variables > Actions): `ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASS`, `ANDROID_KEY_ALIAS`. Keep a backup of the keystore: if it's lost, a new key means uninstalling the app (and its saves) before the next update installs. Icons come from `tools/gen_icon.py`.
+
 ## Build flow
 
 Every push to `main` runs `.github/workflows/build-web.yml`:

@@ -1,0 +1,130 @@
+name: Build Android APK
+
+# Builds a signed APK for sideloading and publishes it as a GitHub Release.
+# Latest download: https://github.com/DArtagnon-wiki/Werecat/releases/latest/download/werecat.apk
+#
+# Needs three repository secrets (Settings > Secrets and variables > Actions):
+#   ANDROID_KEYSTORE_B64   base64 of the release keystore
+#   ANDROID_KEYSTORE_PASS  its password
+#   ANDROID_KEY_ALIAS      its key alias
+# Every build is signed with the same key, so updates install over the old
+# app and keep saved progress. Without the secrets the job skips publishing.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check signing secrets
+        id: keys
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KS" ]; then
+            echo "::warning::ANDROID_KEYSTORE_B64 is not set, so no APK is built. See the comment at the top of this workflow."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cache Godot and Android export templates
+        if: steps.keys.outputs.ok == 'true'
+        id: cache-godot
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/godot
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-android
+
+      - name: Install Godot ${{ env.GODOT_VERSION }}
+        if: steps.keys.outputs.ok == 'true' && steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          mkdir -p ~/godot
+          curl -fsSL -o /tmp/godot.zip "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q /tmp/godot.zip -d ~/godot
+          mv ~/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64 ~/godot/godot
+          chmod +x ~/godot/godot
+          curl -fsSL -o /tmp/templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          tdir=~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          mkdir -p "$tdir"
+          # Only the Android release template is needed; the archive is >1 GB.
+          unzip -jqo /tmp/templates.tpz 'templates/version.txt' 'templates/android_release.apk' -d "$tdir"
+
+      - name: Android SDK build tools
+        if: steps.keys.outputs.ok == 'true'
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;36.0.0" > /dev/null
+          ls "$ANDROID_HOME/build-tools"
+
+      - name: Configure export (SDK paths, version, build stamp)
+        if: steps.keys.outputs.ok == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.config/godot
+          for v in 4.7 4; do
+            printf '[gd_resource type="EditorSettings" format=3]\n\n[resource]\nexport/android/android_sdk_path = "%s"\nexport/android/java_sdk_path = "%s"\n' \
+              "$ANDROID_HOME" "$JAVA_HOME_17_X64" > ~/.config/godot/editor_settings-$v.tres
+          done
+          # versionCode must grow for an update to install over the old app
+          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/; s/^version\/name=.*/version\/name=\"1.${{ github.run_number }}\"/" export_presets.cfg
+          id="$(git rev-parse --short HEAD) $(TZ=America/Los_Angeles date '+%b %-d %-I:%M%p')"
+          printf 'class_name BuildInfo\nconst ID := "%s"\n' "$id" > scripts/build_info.gd
+          cat scripts/build_info.gd
+
+      - name: Import project
+        if: steps.keys.outputs.ok == 'true'
+        run: ~/godot/godot --headless --path . --import || true
+
+      - name: Export signed APK
+        if: steps.keys.outputs.ok == 'true'
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          GODOT_ANDROID_KEYSTORE_RELEASE_USER: ${{ secrets.ANDROID_KEY_ALIAS }}
+          GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+        run: |
+          set -euo pipefail
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$RUNNER_TEMP/release.keystore"
+          mkdir -p build/android
+          ~/godot/godot --headless --path . --export-release "Android" build/android/werecat.apk
+          rm -f "$RUNNER_TEMP/release.keystore"
+          test -f build/android/werecat.apk
+          bt=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$bt/apksigner" verify --print-certs build/android/werecat.apk | head -2
+          ls -la build/android/werecat.apk
+
+      - name: Publish release
+        if: steps.keys.outputs.ok == 'true' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="apk-${{ github.run_number }}"
+          gh release create "$tag" build/android/werecat.apk \
+            --title "Werecat for Android (build ${{ github.run_number }})" \
+            --notes "Sideload build from $(git rev-parse --short HEAD). Install over the previous version to keep progress." \
+            --latest
+          # keep the five newest APK releases
+          gh release list --limit 100 --json tagName -q '.[].tagName' | grep '^apk-' | sort -t- -k2 -n -r | tail -n +6 | while read -r old; do
+            gh release delete "$old" --yes --cleanup-tag || true
+          done
