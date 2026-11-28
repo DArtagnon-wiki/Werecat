@@ -396,6 +396,31 @@ func run() -> void:
 		stones += 1 if v == g.STONE else 0
 	check(mz == mz2 and stones > 500, "mazes are deterministic and solid (%d stone cells)" % stones)
 
+	# zone sprites never outlive their night (intro -> another intro -> play)
+	var ring_count := func() -> int:
+		var n := 0
+		for ch in g.zone_layer.get_children():
+			if ch is Sprite2D and not ch.is_queued_for_deletion() and ch.texture == g.T.ui_zone_ring:
+				n += 1
+		return n
+	var with_rings := -1
+	var no_rings := -1
+	for i in g.levels.size():
+		if with_rings < 0 and g.levels[i].get("zones", []).size() >= 2:
+			with_rings = i
+		if no_rings < 0 and g.levels[i].get("zones", []).is_empty():
+			no_rings = i
+	g.open_intro(with_rings)
+	g.begin_play()
+	var had: int = ring_count.call()
+	g.open_intro(with_rings)        # replay: rebuilt, not doubled
+	g.begin_play()
+	var again: int = ring_count.call()
+	g.open_intro(no_rings)          # a night without rings: none left over
+	g.begin_play()
+	check(had == g.levels[with_rings].zones.size() and again == had and ring_count.call() == 0,
+		"zone rings never persist between nights (%d, %d, then %d)" % [had, again, ring_count.call()])
+
 	# ---------------------------------------------------------------- all levels
 	var lv_ok := true
 	var rules_ok := true

@@ -1493,7 +1493,7 @@ func _end(won: bool) -> void:
 
 func _load_layout(lv: Dictionary) -> void:
 	_clear_entities()
-	zones.clear()
+	_clear_zones()
 	if trail_line:
 		_clear_stroke()
 	var built := Levels.build(lv, GW, GH)
@@ -2844,13 +2844,21 @@ func step_endless(delta: float) -> void:
 
 # ================================================================ zones + objectives
 
-func _build_zones(lv: Dictionary) -> void:
+## Removes the zones and their ring/icon sprites. Every reset goes through
+## here, so sprites can't outlive their night.
+func _clear_zones() -> void:
 	for z in zones:
 		for k in ["ring_node", "icon_node"]:
 			if z.has(k) and is_instance_valid(z[k]):
 				z[k].queue_free()
 	zones.clear()
 	_zone_sig = ""
+	if zone_layer:
+		zone_layer.queue_redraw()
+
+
+func _build_zones(lv: Dictionary) -> void:
+	_clear_zones()
 	for spec in lv.get("zones", []):
 		var c: Vector2 = spec.at * FIELD_SIZE
 		var r: float = float(spec.r) * FIELD_SIZE.x
