@@ -396,6 +396,9 @@ func run() -> void:
 		stones += 1 if v == g.STONE else 0
 	check(mz == mz2 and stones > 500, "mazes are deterministic and solid (%d stone cells)" % stones)
 
+	check(g.star_count(3, 40.0, 60.0) == 3 and g.star_count(2, 40.0, 60.0) == 2 and g.star_count(3, 80.0, 60.0) == 2
+		and g.star_count(1, 80.0, 60.0) == 1, "stars: win, all hearts, and under par each count on their own")
+
 	# zone sprites never outlive their night (intro -> another intro -> play)
 	var ring_count := func() -> int:
 		var n := 0

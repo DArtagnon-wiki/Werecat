@@ -38,6 +38,8 @@ Each world goes introduce, develop, twist, combine, finale, and every night foll
 
 Difficulty is tuned per night with a creature-speed "tempo" (`TEMPO` in `scripts/levels.gd`, tuned by `tools/tune_tempo.py`) against the bot's win rate: about 85% in World 1 down to about 30% in World 20, with each world's finale its hardest night. The bot plays like a careful person: it picks walls that keep clear of creatures and pockets with nobody inside.
 
+**Stars** are earned independently: one for winning, one for keeping all 3 hearts, one for finishing within the night's target time. Target times (`PAR` in `scripts/levels.gd`) come from `tools/tune_par.py`: 1.5x the bot's median winning time plus 3 s per wall it needed (the bot draws instantly), at least 45 s.
+
 A night that can no longer be won ends at once with the reason (for example, too few bats left to pen and no roost to hatch more).
 
 **Generators** keep hatching until their ground flips: bat roosts and gift boxes (bats / fuzzies), hunter dens and huggy huts (hunters), grub and candy burrows (carvers), and wisp lanterns (wisps, both sides, max 2).

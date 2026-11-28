@@ -1456,13 +1456,17 @@ func _end(won: bool) -> void:
 		btn_next.visible = false
 		audio.play("lose", -2.0)
 	elif won:
-		earned = 1 + (1 if lives == 3 else 0) + (1 if lives == 3 and clock <= float(level.par) else 0)
+		earned = star_count(lives, clock, float(level.par))
 		stars[level_idx] = maxi(stars[level_idx], earned)
 		lbl_over_title.text = "The Werecat is pleased" if level_idx < levels.size() - 1 else "The spell is broken!"
-		var hint := ""
-		if earned < 3:
-			hint = "Keep all 3 hearts for more stars" if lives < 3 else "Finish within %ds for 3 stars" % int(level.par)
-		lbl_over_sub.text = ("Night %s complete" % level.id) if hint == "" else hint
+		# say which stars were missed
+		var missed: Array = []
+		if lives < 3:
+			missed.append("keep all 3 hearts")
+		if clock > float(level.par):
+			missed.append("finish within %ds (you took %ds)" % [int(level.par), int(ceil(clock))])
+		lbl_over_sub.text = ("Night %s complete in %ds" % [level.id, int(ceil(clock))]) if missed.is_empty() \
+			else ("For more stars: " + " and ".join(missed))
 		btn_next.visible = level_idx + 1 < levels.size()
 		audio.play("win", -1.0)
 	else:
@@ -2970,6 +2974,12 @@ func holds_left() -> int:
 		if z.kind == "hold" and not z.held:
 			n += 1
 	return n
+
+
+## Stars are independent: one for winning, one for keeping all 3 hearts,
+## one for finishing within the night's target time (par).
+static func star_count(lives_left: int, secs: float, par: float) -> int:
+	return 1 + (1 if lives_left == 3 else 0) + (1 if secs <= par else 0)
 
 
 func objectives_done() -> bool:
